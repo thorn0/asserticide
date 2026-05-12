@@ -1,0 +1,26 @@
+{
+  "name": "asserticide",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "asserticide": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "test": "npm run build && node --test test/asserticide.test.ts"
+  },
+  "dependencies": {
+    "@typescript/native-preview": "beta",
+    "typescript": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  }
+}
