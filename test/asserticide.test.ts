@@ -170,6 +170,85 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.removed, 2);
   });
 
+  test('keeps both casts of `as any as T` force-cast when the inner cannot be removed', (t) => {
+    const fx = makeFixture(t);
+    const src = [
+      'interface Animated { animVal: string }\n',
+      'export function f(s: string): string {\n',
+      '  return (s as any as Animated).animVal;\n',
+      '}\n',
+    ].join('');
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 2);
+    assert.equal(s.removed, 0);
+    assert.equal(s.kept, 2);
+  });
+
+  test('keeps both casts of `<T><any>x` angle-bracket force-cast when the inner cannot be removed', (t) => {
+    const fx = makeFixture(t);
+    const src = [
+      'interface Animated { animVal: string }\n',
+      'export function f(s: string): string {\n',
+      '  return (<Animated><any>s).animVal;\n',
+      '}\n',
+    ].join('');
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 2);
+    assert.equal(s.removed, 0);
+    assert.equal(s.kept, 2);
+  });
+
+  test('removes both casts of `as any as T` when the inner removal unblocks the outer', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(s: string): string {\n  return s as any as string;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(s: string): string {\n  return s;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 2);
+    assert.equal(s.removed, 2);
+  });
+
+  test('keeps the outer cast of `as any as T` when only the inner is redundant', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: unknown): string {\n  return x as any as string;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: unknown): string {\n  return x as string;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 2);
+    assert.equal(s.removed, 1);
+    assert.equal(s.kept, 1);
+  });
+
   test('does not touch `as` assertions in node_modules source files', (t) => {
     const fx = makeFixture(t);
     fx.write('src/a.ts', 'import { x } from "../node_modules/foo/index.js";\nexport const y = x;\n');

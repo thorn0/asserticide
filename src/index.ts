@@ -6,10 +6,14 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import ts from 'typescript';
 
-interface Assertion {
-  filePath: string;
+interface CutRange {
   cutStart: number;
   cutEnd: number;
+}
+
+interface Assertion extends CutRange {
+  filePath: string;
+  pendingOuter?: CutRange;
 }
 
 const log = (msg: string): void => console.log(`asserticide: ${msg}`);
@@ -90,25 +94,46 @@ function loadProgram(tsconfigPath: string): ts.Program {
   });
 }
 
+const isCast = (n: ts.Node): n is ts.AssertionExpression =>
+  ts.isAsExpression(n) || ts.isTypeAssertionExpression(n);
+
+const isAnyKeyword = (t: ts.TypeNode): boolean => t.kind === ts.SyntaxKind.AnyKeyword;
+
+const unwrapParens = (e: ts.Expression): ts.Expression => {
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  return e;
+};
+
+const cutRangeFor = (cast: ts.AssertionExpression, sf: ts.SourceFile): CutRange =>
+  ts.isAsExpression(cast)
+    ? { cutStart: cast.expression.end, cutEnd: cast.end }
+    : { cutStart: cast.getStart(sf), cutEnd: cast.expression.getStart(sf) };
+
 function collectAssertions(program: ts.Program): { files: ts.SourceFile[]; assertions: Assertion[] } {
   const files = program.getSourceFiles().filter(
     (sf) => !sf.isDeclarationFile && !program.isSourceFileFromExternalLibrary(sf),
   );
   const assertions: Assertion[] = [];
   for (const sf of files) {
+    const handled = new Set<ts.Node>();
     const visit = (node: ts.Node): void => {
-      if (ts.isAsExpression(node) && !ts.isConstTypeReference(node.type)) {
-        assertions.push({
-          filePath: sf.fileName,
-          cutStart: node.expression.end,
-          cutEnd: node.end,
-        });
-      } else if (ts.isTypeAssertionExpression(node)) {
-        assertions.push({
-          filePath: sf.fileName,
-          cutStart: node.getStart(sf),
-          cutEnd: node.expression.getStart(sf),
-        });
+      const candidate =
+        (ts.isAsExpression(node) && !ts.isConstTypeReference(node.type)) ||
+        ts.isTypeAssertionExpression(node);
+      if (candidate && !handled.has(node)) {
+        const cast = node as ts.AssertionExpression;
+        const inner = unwrapParens(cast.expression);
+        if (isCast(inner) && isAnyKeyword(inner.type)) {
+          // `x as any as T`: outer rides on the inner — attempted only if the inner removes cleanly, else it would silently widen to `any`.
+          assertions.push({
+            filePath: sf.fileName,
+            ...cutRangeFor(inner, sf),
+            pendingOuter: cutRangeFor(cast, sf),
+          });
+          handled.add(inner);
+        } else {
+          assertions.push({ filePath: sf.fileName, ...cutRangeFor(cast, sf) });
+        }
       }
       ts.forEachChild(node, visit);
     };
@@ -142,35 +167,62 @@ function run(project: string, tsgoBin: string, program: ts.Program): void {
   }
 
   const { files, assertions } = collectAssertions(program);
-  log(`scanned ${files.length} files, found ${assertions.length} type assertions`);
+  let total = 0;
+  for (const a of assertions) total += a.pendingOuter ? 2 : 1;
+  log(`scanned ${files.length} files, found ${total} type assertions`);
 
   assertions.sort((a, b) => a.filePath.localeCompare(b.filePath) || b.cutStart - a.cutStart);
 
   let removed = 0;
+  let progress = 0;
   const changedFiles = new Set<string>();
   const contents = new Map<string, string>();
 
-  for (let i = 0; i < assertions.length; i++) {
-    const a = assertions[i];
-    const before = contents.get(a.filePath) ?? readFileSync(a.filePath, 'utf8');
-    const after = before.slice(0, a.cutStart) + before.slice(a.cutEnd);
-    writeFileSync(a.filePath, after);
+  const tryRemove = (filePath: string, cut: CutRange): boolean => {
+    const before = contents.get(filePath) ?? readFileSync(filePath, 'utf8');
+    const after = before.slice(0, cut.cutStart) + before.slice(cut.cutEnd);
+    writeFileSync(filePath, after);
     const ok = runTsgo(tsgoBin, project).ok;
     if (ok) {
-      contents.set(a.filePath, after);
+      contents.set(filePath, after);
+    } else {
+      writeFileSync(filePath, before);
+      contents.set(filePath, before);
+    }
+    return ok;
+  };
+
+  const reportStep = (filePath: string, ok: boolean): void => {
+    progress++;
+    log(`[${progress}/${total}] ${relative(process.cwd(), filePath)} - ${ok ? 'removed' : 'kept'}`);
+  };
+
+  for (const a of assertions) {
+    const ok = tryRemove(a.filePath, a);
+    reportStep(a.filePath, ok);
+    if (ok) {
       removed++;
       changedFiles.add(a.filePath);
-    } else {
-      writeFileSync(a.filePath, before);
-      contents.set(a.filePath, before);
+      if (a.pendingOuter) {
+        // Inner removal shifts positions >= a.cutEnd left by W; an angle-bracket outer sits before the inner and needs no shift.
+        const w = a.cutEnd - a.cutStart;
+        const shift = a.pendingOuter.cutStart >= a.cutEnd ? w : 0;
+        const okOuter = tryRemove(a.filePath, {
+          cutStart: a.pendingOuter.cutStart - shift,
+          cutEnd: a.pendingOuter.cutEnd - shift,
+        });
+        reportStep(a.filePath, okOuter);
+        if (okOuter) removed++;
+      }
+    } else if (a.pendingOuter) {
+      reportStep(a.filePath, false);
     }
-    log(`[${i + 1}/${assertions.length}] ${relative(process.cwd(), a.filePath)} - ${ok ? 'removed' : 'kept'}`);
   }
 
   console.log('---');
-  console.log(`total assertions found:    ${assertions.length}`);
+  console.log(`total assertions found:    ${total}`);
   console.log(`removed assertions:        ${removed}`);
-  console.log(`kept/reverted assertions:  ${assertions.length - removed}`);
+  console.log(`kept/reverted assertions:  ${total - removed}`);
   console.log(`files changed:             ${changedFiles.size}`);
   for (const f of changedFiles) {
     console.log(`- ${relative(process.cwd(), f)}`);
