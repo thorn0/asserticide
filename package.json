@@ -1,11 +1,16 @@
 {
+  "author": "Georgii Dolzhykov <thorn.mailbox@gmail.com>",
   "bin": {
     "asserticide": "./dist/index.js"
+  },
+  "bugs": {
+    "url": "https://github.com/thorn0/asserticide/issues"
   },
   "dependencies": {
     "@typescript/native-preview": "beta",
     "typescript": "^6.0.0"
   },
+  "description": "Kill every redundant type assertion in your TypeScript codebase",
   "devDependencies": {
     "@types/node": "^24.0.0"
   },
@@ -15,10 +20,29 @@
   "files": [
     "dist"
   ],
+  "homepage": "https://github.com/thorn0/asserticide#readme",
+  "keywords": [
+    "typescript",
+    "type-assertion",
+    "no-unnecessary-type-assertion",
+    "assertion",
+    "cleanup",
+    "codemod",
+    "refactor",
+    "lint",
+    "cli",
+    "tsgo",
+    "typescript-go"
+  ],
+  "license": "MIT",
   "name": "asserticide",
   "prettier": {
     "objectWrap": "collapse",
     "singleQuote": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thorn0/asserticide.git"
   },
   "scripts": {
     "build": "tsc",

@@ -28,8 +28,22 @@ A few cases where an assertion is kept even though `tsgo` would accept the delet
 ## Use
 
 ```sh
-asserticide                          # uses ./tsconfig.json
-asserticide path/to/tsconfig.json
+npx asserticide                          # uses ./tsconfig.json
+npx asserticide path/to/tsconfig.json
 ```
 
-Requires Node ≥ 24.
+Requires Node ≥ 24. asserticide refuses to run if the project doesn't typecheck cleanly under `tsgo`. Commit your working tree first so you can review the diff afterwards.
+
+Sample output:
+
+```
+---
+total assertions found:    412
+removed assertions:        287
+reverted by typecheck:     118
+preserved by rule:         7
+files changed:             54
+- src/api/client.ts
+- src/components/Grid.tsx
+- ...
+```
