@@ -187,6 +187,30 @@ const cutRangeFor = (
     ? { cutStart: node.expression.end, cutEnd: node.end }
     : { cutStart: node.getStart(sf), cutEnd: node.expression.getStart(sf) };
 
+const isInitializerOfUntypedVarDecl = (n: ts.Node): boolean => {
+  let p: ts.Node | undefined = n.parent;
+  while (
+    p &&
+    (ts.isParenthesizedExpression(p) || ts.isSatisfiesExpression(p))
+  ) {
+    p = p.parent;
+  }
+  return (
+    p !== undefined &&
+    ts.isVariableDeclaration(p) &&
+    p.type === undefined &&
+    ts.isIdentifier(p.name)
+  );
+};
+
+const chainBottomsAtObjectLiteral = (e: ts.Expression): boolean => {
+  let cur = unwrapParens(e);
+  while (ts.isAssertionExpression(cur) || ts.isSatisfiesExpression(cur)) {
+    cur = unwrapParens(cur.expression);
+  }
+  return ts.isObjectLiteralExpression(cur);
+};
+
 type AnalyzableFunctionLike =
   | ts.FunctionDeclaration
   | ts.FunctionExpression
@@ -267,7 +291,16 @@ function collectAssertions(ip: IncrementalProgram): {
         if (isNeverKeyword(node.type)) {
           // `as never` is almost always an intentional type hack; preserve it.
           preserved++;
-        } else if (ts.isAssertionExpression(inner) && isAnyKeyword(inner.type)) {
+        } else if (
+          chainBottomsAtObjectLiteral(node.expression) &&
+          isInitializerOfUntypedVarDecl(node)
+        ) {
+          // `{...} as T` on an object-literal initializer drives the literal's contextual type.
+          preserved++;
+        } else if (
+          ts.isAssertionExpression(inner) &&
+          isAnyKeyword(inner.type)
+        ) {
           // `x as any as T`: when the operand is `any`, the outer `as T` is the narrowing and must stay.
           const operandIsAny = isAnyOperand(inner.expression);
           assertions.push({

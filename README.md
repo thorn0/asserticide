@@ -19,10 +19,11 @@ What survives is the set of assertions actually doing work — plus the small se
 A few cases where an assertion is kept even though `tsgo` would accept the deletion:
 
 - `as const` — never touched.
-- `as never` (and `<never>`) — never touched; almost always an intentional type hack.
-- `x as T` when `x` already has type `any` (and `T` ≠ `any`) — removing it would let `any` silently propagate.
-- `x as any as T` is treated as a paired double assertion; neither half is removed in a way that would change the value's effective type. When `x` already has type `any`, the inner `as any` is removed and the outer `as T` stays.
-- An assertion inside a function with an *inferred* return type, when removing it would change the function's inferred return type. Functions with an explicit return annotation are exempt.
+- `as never` — never touched; almost always an intentional type hack.
+- `x as T` when `x` has type `any` (and `T` ≠ `any`) — removing it would let `any` silently propagate.
+- `x as any as T` — neither half is removed in a way that would change the value's effective type. When `x` already has type `any`, the inner `as any` is removed and the outer `as T` stays.
+- An assertion inside a function with an _inferred_ return type, when removing it would change the function's inferred return type. Functions with an explicit return annotation are exempt.
+- `{ ... } as T` initializing an unannotated variable — on object literals the assertion drives contextual typing inside the braces: editor property suggestions, per-field checks.
 
 ## Use
 

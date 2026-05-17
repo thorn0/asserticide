@@ -558,6 +558,175 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.preserved, 0);
   });
 
+  test('preserves an `as T` on an object literal in an untyped variable initializer', (t) => {
+    const fx = makeFixture(t);
+    const src = [
+      'interface State { a?: number; b?: string }\n',
+      'export const state = { a: 1 } as State;\n',
+    ].join('');
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 0);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('preserves an `<T>` angle-bracket assertion on an object literal in an untyped variable initializer', (t) => {
+    const fx = makeFixture(t);
+    const src = [
+      'interface State { a?: number; b?: string }\n',
+      'export const state = <State>{ a: 1 };\n',
+    ].join('');
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('preserves an `as T` on an object literal in an untyped `let` initializer', (t) => {
+    const fx = makeFixture(t);
+    const src = [
+      'interface State { a?: number; b?: string }\n',
+      'export let state = { a: 1 } as State;\n',
+    ].join('');
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+  });
+
+  test('removes an `as T` on an object literal when the variable has an explicit type annotation', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'interface State { a?: number }\nexport const state: State = { a: 1 } as State;\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'interface State { a?: number }\nexport const state: State = { a: 1 };\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+  });
+
+  test('preserves the outer `as T` of a `{...} as unknown as T` chain in an untyped variable initializer', (t) => {
+    const fx = makeFixture(t);
+    const src = [
+      'interface State { req: string }\n',
+      'export const state = { a: 1 } as unknown as State;\n',
+    ].join('');
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.reverted, 1);
+  });
+
+  test('preserves the outer `as T` of a `{...} as any as T` chain in an untyped variable initializer', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      [
+        'interface State { a: number; b?: string }\n',
+        'export const state = { a: 1 } as any as State;\n',
+      ].join(''),
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      [
+        'interface State { a: number; b?: string }\n',
+        'export const state = { a: 1 } as State;\n',
+      ].join(''),
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.removed, 1);
+  });
+
+  test('preserves the outer `as T` on an object literal wrapped in a `satisfies T` clause', (t) => {
+    const fx = makeFixture(t);
+    const src = [
+      'interface State { a: number; b?: string }\n',
+      'export const state = ({ a: 1 } as State) satisfies State;\n',
+    ].join('');
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+  });
+
+  test('preserves the outer `as T` over a `{...} satisfies U` operand in an untyped variable initializer', (t) => {
+    const fx = makeFixture(t);
+    const src = [
+      'interface State { a: number; b?: string }\n',
+      'export const state = ({ a: 1 } satisfies State) as State;\n',
+    ].join('');
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+  });
+
+  test('removes an `as T` on an object literal in argument position', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      [
+        'interface State { a?: number }\n',
+        'export function take(s: State): State { return s; }\n',
+        'export const r = take({ a: 1 } as State);\n',
+      ].join(''),
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      [
+        'interface State { a?: number }\n',
+        'export function take(s: State): State { return s; }\n',
+        'export const r = take({ a: 1 });\n',
+      ].join(''),
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+  });
+
   test('does not touch `as` assertions in node_modules source files', (t) => {
     const fx = makeFixture(t);
     fx.write('src/a.ts', 'import { x } from "../node_modules/foo/index.js";\nexport const y = x;\n');
