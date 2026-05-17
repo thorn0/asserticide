@@ -35,7 +35,9 @@ const err = (msg: string): void => console.error(`asserticide: ${msg}`);
 function resolveProject(): string {
   const { positionals } = parseArgs({ allowPositionals: true, strict: true });
   if (positionals.length > 1) {
-    throw new Error(`expected at most one tsconfig path, got ${positionals.length}`);
+    throw new Error(
+      `expected at most one tsconfig path, got ${positionals.length}`,
+    );
   }
   return pathResolve(positionals[0] ?? 'tsconfig.json');
 }
@@ -60,7 +62,10 @@ function resolveTsgoBin(): string {
   );
 }
 
-function runTsgo(bin: string, project: string): { ok: boolean; output: string } {
+function runTsgo(
+  bin: string,
+  project: string,
+): { ok: boolean; output: string } {
   const result =
     process.platform === 'win32'
       ? spawnSync(`"${bin}" --noEmit --project "${project}"`, {
@@ -82,7 +87,9 @@ function runTsgo(bin: string, project: string): { ok: boolean; output: string } 
 }
 
 const diagnosticHost: ts.FormatDiagnosticsHost = {
-  getCanonicalFileName: ts.sys.useCaseSensitiveFileNames ? (f) => f : (f) => f.toLowerCase(),
+  getCanonicalFileName: ts.sys.useCaseSensitiveFileNames
+    ? (f) => f
+    : (f) => f.toLowerCase(),
   getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
   getNewLine: () => ts.sys.newLine,
 };
@@ -91,7 +98,8 @@ function loadProgram(tsconfigPath: string): IncrementalProgram {
   const format = (ds: readonly ts.Diagnostic[]): string =>
     ts.formatDiagnosticsWithColorAndContext(ds, diagnosticHost);
   const read = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
-  if (read.error) throw new Error(`failed to read ${tsconfigPath}:\n${format([read.error])}`);
+  if (read.error)
+    throw new Error(`failed to read ${tsconfigPath}:\n${format([read.error])}`);
   const parsed = ts.parseJsonConfigFileContent(
     read.config,
     ts.sys,
@@ -99,7 +107,8 @@ function loadProgram(tsconfigPath: string): IncrementalProgram {
     undefined,
     tsconfigPath,
   );
-  if (parsed.errors.length > 0) throw new Error(`tsconfig errors:\n${format(parsed.errors)}`);
+  if (parsed.errors.length > 0)
+    throw new Error(`tsconfig errors:\n${format(parsed.errors)}`);
 
   const overlay = new Map<string, string>();
   const sourceFileCache = new Map<string, ts.SourceFile>();
@@ -159,22 +168,24 @@ function loadProgram(tsconfigPath: string): IncrementalProgram {
   };
 }
 
-const isCast = (n: ts.Node): n is ts.AssertionExpression =>
-  ts.isAsExpression(n) || ts.isTypeAssertionExpression(n);
+const isAnyKeyword = (t: ts.TypeNode): boolean =>
+  t.kind === ts.SyntaxKind.AnyKeyword;
 
-const isAnyKeyword = (t: ts.TypeNode): boolean => t.kind === ts.SyntaxKind.AnyKeyword;
-
-const isNeverKeyword = (t: ts.TypeNode): boolean => t.kind === ts.SyntaxKind.NeverKeyword;
+const isNeverKeyword = (t: ts.TypeNode): boolean =>
+  t.kind === ts.SyntaxKind.NeverKeyword;
 
 const unwrapParens = (e: ts.Expression): ts.Expression => {
   while (ts.isParenthesizedExpression(e)) e = e.expression;
   return e;
 };
 
-const cutRangeFor = (cast: ts.AssertionExpression, sf: ts.SourceFile): CutRange =>
-  ts.isAsExpression(cast)
-    ? { cutStart: cast.expression.end, cutEnd: cast.end }
-    : { cutStart: cast.getStart(sf), cutEnd: cast.expression.getStart(sf) };
+const cutRangeFor = (
+  node: ts.AssertionExpression,
+  sf: ts.SourceFile,
+): CutRange =>
+  ts.isAsExpression(node)
+    ? { cutStart: node.expression.end, cutEnd: node.end }
+    : { cutStart: node.getStart(sf), cutEnd: node.expression.getStart(sf) };
 
 type AnalyzableFunctionLike =
   | ts.FunctionDeclaration
@@ -220,7 +231,10 @@ function collectAssertions(ip: IncrementalProgram): {
   const isAnyType = (t: ts.TypeNode): boolean =>
     (checker.getTypeFromTypeNode(t).flags & ts.TypeFlags.Any) !== 0;
   const fnContextCache = new Map<ts.Node, FnContext | undefined>();
-  const computeFnContext = (node: ts.Node, sf: ts.SourceFile): FnContext | undefined => {
+  const computeFnContext = (
+    node: ts.Node,
+    sf: ts.SourceFile,
+  ): FnContext | undefined => {
     const fn = ts.findAncestor(node.parent, isAnalyzableFunctionLike);
     if (!fn) return undefined;
     if (fnContextCache.has(fn)) return fnContextCache.get(fn);
@@ -234,9 +248,12 @@ function collectAssertions(ip: IncrementalProgram): {
     fnContextCache.set(fn, result);
     return result;
   };
-  const files = program.getSourceFiles().filter(
-    (sf) => !sf.isDeclarationFile && !program.isSourceFileFromExternalLibrary(sf),
-  );
+  const files = program
+    .getSourceFiles()
+    .filter(
+      (sf) =>
+        !sf.isDeclarationFile && !program.isSourceFileFromExternalLibrary(sf),
+    );
   const assertions: Assertion[] = [];
   let preserved = 0;
   for (const sf of files) {
@@ -246,30 +263,29 @@ function collectAssertions(ip: IncrementalProgram): {
         (ts.isAsExpression(node) && !ts.isConstTypeReference(node.type)) ||
         ts.isTypeAssertionExpression(node);
       if (candidate && !handled.has(node)) {
-        const cast = node as ts.AssertionExpression;
-        const inner = unwrapParens(cast.expression);
-        if (isNeverKeyword(cast.type)) {
+        const inner = unwrapParens(node.expression);
+        if (isNeverKeyword(node.type)) {
           // `as never` is almost always an intentional type hack; preserve it.
           preserved++;
-        } else if (isCast(inner) && isAnyKeyword(inner.type)) {
+        } else if (ts.isAssertionExpression(inner) && isAnyKeyword(inner.type)) {
           // `x as any as T`: when the operand is `any`, the outer `as T` is the narrowing and must stay.
           const operandIsAny = isAnyOperand(inner.expression);
           assertions.push({
             filePath: sf.fileName,
             ...cutRangeFor(inner, sf),
-            pendingOuter: operandIsAny ? undefined : cutRangeFor(cast, sf),
-            fnContext: computeFnContext(cast, sf),
+            pendingOuter: operandIsAny ? undefined : cutRangeFor(node, sf),
+            fnContext: computeFnContext(node, sf),
           });
           if (operandIsAny) preserved++;
           handled.add(inner);
-        } else if (isAnyOperand(cast.expression) && !isAnyType(cast.type)) {
-          // Removing a cast whose operand is `any` would silently let `any` propagate as `T`.
+        } else if (isAnyOperand(node.expression) && !isAnyType(node.type)) {
+          // Removing a type assertion whose operand is `any` would silently let `any` propagate.
           preserved++;
         } else {
           assertions.push({
             filePath: sf.fileName,
-            ...cutRangeFor(cast, sf),
-            fnContext: computeFnContext(cast, sf),
+            ...cutRangeFor(node, sf),
+            fnContext: computeFnContext(node, sf),
           });
         }
       }
@@ -306,29 +322,45 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
     process.exit(1);
   }
 
-  const { files, assertions, preserved: initialPreserved } = collectAssertions(ip);
+  const {
+    files,
+    assertions,
+    preserved: initialPreserved,
+  } = collectAssertions(ip);
   let preserved = initialPreserved;
   let total = 0;
   for (const a of assertions) total += a.pendingOuter ? 2 : 1;
   log(`scanned ${files.length} files, found ${total} type assertions`);
   if (preserved > 0)
-    log(`(${preserved} cast${preserved === 1 ? '' : 's'} preserved by rule)`);
+    log(
+      `(${preserved} assertion${preserved === 1 ? '' : 's'} preserved by rule)`,
+    );
 
-  assertions.sort((a, b) => a.filePath.localeCompare(b.filePath) || b.cutStart - a.cutStart);
+  assertions.sort(
+    (a, b) => a.filePath.localeCompare(b.filePath) || b.cutStart - a.cutStart,
+  );
 
   let removed = 0;
   let revertedByTsgo = 0;
   let progress = 0;
   const changedFiles = new Set<string>();
 
-  const checkReturnTypeStable = (filePath: string, fnContext: FnContext): boolean => {
+  const checkReturnTypeStable = (
+    filePath: string,
+    fnContext: FnContext,
+  ): boolean => {
     const sf = ip.getProgram().getSourceFile(filePath);
-    const fn = sf ? locateFunctionLikeAtPos(sf, fnContext.fnStartPos) : undefined;
+    const fn = sf
+      ? locateFunctionLikeAtPos(sf, fnContext.fnStartPos)
+      : undefined;
     if (!fn) return false;
     const checker = ip.getChecker();
     const sig = checker.getSignatureFromDeclaration(fn);
     if (!sig) return false;
-    return checker.typeToString(sig.getReturnType()) === fnContext.fnOriginalReturnType;
+    return (
+      checker.typeToString(sig.getReturnType()) ===
+      fnContext.fnOriginalReturnType
+    );
   };
 
   const tryRemove = (
@@ -355,7 +387,9 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
 
   const reportStep = (filePath: string, label: string): void => {
     progress++;
-    log(`[${progress}/${total}] ${relative(process.cwd(), filePath)} - ${label}`);
+    log(
+      `[${progress}/${total}] ${relative(process.cwd(), filePath)} - ${label}`,
+    );
   };
 
   const bump = (r: TryResult): void => {

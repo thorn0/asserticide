@@ -182,7 +182,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.filesChanged, 0);
   });
 
-  test('never removes `<never>` angle-bracket cast, even when the resulting code would typecheck', (t) => {
+  test('never removes `<never>` angle-bracket assertion, even when the resulting code would typecheck', (t) => {
     const fx = makeFixture(t);
     const src = [
       'export function impossible(): never { throw new Error(); }\n',
@@ -234,7 +234,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.removed, 2);
   });
 
-  test('keeps both casts of `as any as T` force-cast when the inner cannot be removed', (t) => {
+  test('keeps both assertions of `as any as T` when the inner cannot be removed', (t) => {
     const fx = makeFixture(t);
     const src = [
       'interface Animated { animVal: string }\n',
@@ -254,7 +254,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.reverted, 2);
   });
 
-  test('keeps both casts of `<T><any>x` angle-bracket force-cast when the inner cannot be removed', (t) => {
+  test('keeps both assertions of `<T><any>x` when the inner cannot be removed', (t) => {
     const fx = makeFixture(t);
     const src = [
       'interface Animated { animVal: string }\n',
@@ -274,7 +274,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.reverted, 2);
   });
 
-  test('removes both casts of `as any as T` when the inner removal unblocks the outer', (t) => {
+  test('removes both assertions of `as any as T` when the inner removal unblocks the outer', (t) => {
     const fx = makeFixture(t);
     fx.write(
       'src/a.ts',
@@ -293,7 +293,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.removed, 2);
   });
 
-  test('keeps the outer cast of `as any as T` when only the inner is redundant', (t) => {
+  test('keeps the outer assertion of `as any as T` when only the inner is redundant', (t) => {
     const fx = makeFixture(t);
     fx.write(
       'src/a.ts',
@@ -313,7 +313,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.reverted, 1);
   });
 
-  test('removes an `as any` cast when the operand is already `any`', (t) => {
+  test('removes an `as any` assertion when the operand is already `any`', (t) => {
     const fx = makeFixture(t);
     fx.write(
       'src/a.ts',
@@ -332,7 +332,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.preserved, 0);
   });
 
-  test('removes an `as` cast to an `any` alias when the operand is also `any`', (t) => {
+  test('removes an `as` assertion to an `any` alias when the operand is also `any`', (t) => {
     const fx = makeFixture(t);
     fx.write(
       'src/a.ts',
@@ -351,7 +351,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.preserved, 0);
   });
 
-  test('keeps an `as` cast when the operand has type `any`', (t) => {
+  test('keeps an `as` assertion when the operand has type `any`', (t) => {
     const fx = makeFixture(t);
     const src = 'export function f(x: any): string {\n  return x as string;\n}\n';
     fx.write('src/a.ts', src);
@@ -367,7 +367,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.filesChanged, 0);
   });
 
-  test('keeps an angle-bracket cast when the operand has type `any`', (t) => {
+  test('keeps an angle-bracket assertion when the operand has type `any`', (t) => {
     const fx = makeFixture(t);
     const src = 'export function f(x: any): string {\n  return <string>x;\n}\n';
     fx.write('src/a.ts', src);
@@ -443,7 +443,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.reverted, 0);
   });
 
-  test('preserves a cast whose removal would widen an inferred return type', (t) => {
+  test('preserves an assertion whose removal would widen an inferred return type', (t) => {
     const fx = makeFixture(t);
     const src = 'export function f(x: string | number) {\n  return x as string;\n}\n';
     fx.write('src/a.ts', src);
@@ -457,7 +457,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.filesChanged, 0);
   });
 
-  test('removes a cast whose enclosing function has an explicit return type annotation', (t) => {
+  test('removes an assertion whose enclosing function has an explicit return type annotation', (t) => {
     const fx = makeFixture(t);
     fx.write(
       'src/a.ts',
@@ -476,7 +476,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.preserved, 0);
   });
 
-  test('preserves a `<T>` angle-bracket cast whose removal would widen an inferred return type', (t) => {
+  test('preserves a `<T>` angle-bracket assertion whose removal would widen an inferred return type', (t) => {
     const fx = makeFixture(t);
     const src = 'export function f(x: string | number) {\n  return <string>x;\n}\n';
     fx.write('src/a.ts', src);
@@ -490,7 +490,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.filesChanged, 0);
   });
 
-  test('preserves a cast inside an arrow function with inferred return type', (t) => {
+  test('preserves an assertion inside an arrow function with inferred return type', (t) => {
     const fx = makeFixture(t);
     const src = 'export const f = (x: string | number) => x as string;\n';
     fx.write('src/a.ts', src);
@@ -504,7 +504,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.filesChanged, 0);
   });
 
-  test('preserves a cast inside a class method with inferred return type', (t) => {
+  test('preserves an assertion inside a class method with inferred return type', (t) => {
     const fx = makeFixture(t);
     const src =
       'export class C {\n  m(x: string | number) {\n    return x as string;\n  }\n}\n';
@@ -519,7 +519,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.filesChanged, 0);
   });
 
-  test('within one function, removes a side-effect cast and preserves a return-pinning cast', (t) => {
+  test('within one function, removes a side-effect assertion and preserves a return-pinning assertion', (t) => {
     const fx = makeFixture(t);
     fx.write(
       'src/a.ts',
@@ -539,7 +539,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.preserved, 1);
   });
 
-  test('removes a cast in a side-effect statement that does not affect the return type', (t) => {
+  test('removes an assertion in a side-effect statement that does not affect the return type', (t) => {
     const fx = makeFixture(t);
     fx.write(
       'src/a.ts',
