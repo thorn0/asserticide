@@ -79,7 +79,8 @@ export function makeFixture(t: TestContext, options: FixtureOptions = {}): Fixtu
 export interface Summary {
   total: number;
   removed: number;
-  kept: number;
+  reverted: number;
+  preserved: number;
   filesChanged: number;
 }
 
@@ -92,7 +93,8 @@ export function parseSummary(stdout: string): Summary {
   return {
     total: grab('total assertions found:'),
     removed: grab('removed assertions:'),
-    kept: grab('kept/reverted assertions:'),
+    reverted: grab('reverted by typecheck:'),
+    preserved: grab('preserved by rule:'),
     filesChanged: grab('files changed:'),
   };
 }

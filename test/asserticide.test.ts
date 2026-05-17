@@ -48,7 +48,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(fx.read('src/a.ts'), src);
     const s = parseSummary(r.stdout);
     assert.equal(s.removed, 0);
-    assert.equal(s.kept, 1);
+    assert.equal(s.reverted, 1);
     assert.equal(s.filesChanged, 0);
   });
 
@@ -76,7 +76,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(fx.read('src/a.ts'), src);
     const s = parseSummary(r.stdout);
     assert.equal(s.removed, 0);
-    assert.equal(s.kept, 1);
+    assert.equal(s.reverted, 1);
   });
 
   test('handles mixed `as` and `<Type>` assertions in one file', (t) => {
@@ -101,7 +101,13 @@ describe('asserticide', { concurrency: true }, () => {
 
     assert.equal(r.exitCode, 0);
     assert.equal(fx.read('src/a.ts'), src);
-    assert.deepEqual(parseSummary(r.stdout), { total: 0, removed: 0, kept: 0, filesChanged: 0 });
+    assert.deepEqual(parseSummary(r.stdout), {
+      total: 0,
+      removed: 0,
+      reverted: 0,
+      preserved: 0,
+      filesChanged: 0,
+    });
   });
 
   test('processes multiple files independently', (t) => {
@@ -187,7 +193,7 @@ describe('asserticide', { concurrency: true }, () => {
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 2);
     assert.equal(s.removed, 0);
-    assert.equal(s.kept, 2);
+    assert.equal(s.reverted, 2);
   });
 
   test('keeps both casts of `<T><any>x` angle-bracket force-cast when the inner cannot be removed', (t) => {
@@ -207,7 +213,7 @@ describe('asserticide', { concurrency: true }, () => {
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 2);
     assert.equal(s.removed, 0);
-    assert.equal(s.kept, 2);
+    assert.equal(s.reverted, 2);
   });
 
   test('removes both casts of `as any as T` when the inner removal unblocks the outer', (t) => {
@@ -246,7 +252,252 @@ describe('asserticide', { concurrency: true }, () => {
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 2);
     assert.equal(s.removed, 1);
-    assert.equal(s.kept, 1);
+    assert.equal(s.reverted, 1);
+  });
+
+  test('removes an `as any` cast when the operand is already `any`', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: any) {\n  return x as any;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: any) {\n  return x;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+    assert.equal(s.preserved, 0);
+  });
+
+  test('removes an `as` cast to an `any` alias when the operand is also `any`', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'type A = any;\nexport function f(x: any) {\n  return x as A;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'type A = any;\nexport function f(x: any) {\n  return x;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+    assert.equal(s.preserved, 0);
+  });
+
+  test('keeps an `as` cast when the operand has type `any`', (t) => {
+    const fx = makeFixture(t);
+    const src = 'export function f(x: any): string {\n  return x as string;\n}\n';
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 0);
+    assert.equal(s.removed, 0);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('keeps an angle-bracket cast when the operand has type `any`', (t) => {
+    const fx = makeFixture(t);
+    const src = 'export function f(x: any): string {\n  return <string>x;\n}\n';
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 0);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('collapses `x as any as T` to `x as T` when x is already `any`', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: any): string {\n  return x as any as string;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: any): string {\n  return x as string;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 1);
+    assert.equal(s.removed, 1);
+    assert.equal(s.preserved, 1);
+  });
+
+  test('collapses `<T><any>x` to `<T>x` when x is already `any`', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: any): string {\n  return <string><any>x;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: any): string {\n  return <string>x;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 1);
+    assert.equal(s.removed, 1);
+    assert.equal(s.preserved, 1);
+  });
+
+  test('preserves the outer `as T` in `x as any as T` when removing it would change the inferred return type', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: string | number) {\n  return x as any as number;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: string | number) {\n  return x as number;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 2);
+    assert.equal(s.removed, 1);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.reverted, 0);
+  });
+
+  test('preserves a cast whose removal would widen an inferred return type', (t) => {
+    const fx = makeFixture(t);
+    const src = 'export function f(x: string | number) {\n  return x as string;\n}\n';
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('removes a cast whose enclosing function has an explicit return type annotation', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: string | number): string | number {\n  return x as string;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: string | number): string | number {\n  return x;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+    assert.equal(s.preserved, 0);
+  });
+
+  test('preserves a `<T>` angle-bracket cast whose removal would widen an inferred return type', (t) => {
+    const fx = makeFixture(t);
+    const src = 'export function f(x: string | number) {\n  return <string>x;\n}\n';
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('preserves a cast inside an arrow function with inferred return type', (t) => {
+    const fx = makeFixture(t);
+    const src = 'export const f = (x: string | number) => x as string;\n';
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('preserves a cast inside a class method with inferred return type', (t) => {
+    const fx = makeFixture(t);
+    const src =
+      'export class C {\n  m(x: string | number) {\n    return x as string;\n  }\n}\n';
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('within one function, removes a side-effect cast and preserves a return-pinning cast', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: string | number) {\n  x as number;\n  return x as string;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: string | number) {\n  x;\n  return x as string;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 2);
+    assert.equal(s.removed, 1);
+    assert.equal(s.preserved, 1);
+  });
+
+  test('removes a cast in a side-effect statement that does not affect the return type', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: string | number) {\n  x as string;\n  return 42;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: string | number) {\n  x;\n  return 42;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+    assert.equal(s.preserved, 0);
   });
 
   test('does not touch `as` assertions in node_modules source files', (t) => {

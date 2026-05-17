@@ -12,7 +12,16 @@ For each type assertion.
 2. Typecheck via [`tsgo`](https://github.com/microsoft/typescript-go).
 3. Keep the deletion if it typechecks; revert otherwise.
 
-What survives is the set of assertions actually doing work.
+What survives is the set of assertions actually doing work — plus the small set [preserved by rule](#preserved-by-rule).
+
+## Preserved by rule
+
+A few cases where a cast is kept even though `tsgo` would accept the deletion:
+
+- `as const` — never touched.
+- `x as T` when `x` already has type `any` (and `T` ≠ `any`) — removing it would let `any` silently propagate.
+- `x as any as T` is treated as a force-cast pair; neither half is removed in a way that would change the value's effective type. When `x` already has type `any`, the inner `as any` is removed and the outer `as T` stays.
+- A cast inside a function with an *inferred* return type, when removing it would change the function's inferred return type. Functions with an explicit return annotation are exempt.
 
 ## Use
 

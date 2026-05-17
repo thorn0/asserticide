@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -11,9 +11,22 @@ interface CutRange {
   cutEnd: number;
 }
 
+interface FnContext {
+  fnStartPos: number;
+  fnOriginalReturnType: string;
+}
+
 interface Assertion extends CutRange {
   filePath: string;
   pendingOuter?: CutRange;
+  fnContext?: FnContext;
+}
+
+interface IncrementalProgram {
+  getProgram(): ts.Program;
+  getChecker(): ts.TypeChecker;
+  getContents(filePath: string): string;
+  setContents(filePath: string, newContents: string): void;
 }
 
 const log = (msg: string): void => console.log(`asserticide: ${msg}`);
@@ -74,7 +87,7 @@ const diagnosticHost: ts.FormatDiagnosticsHost = {
   getNewLine: () => ts.sys.newLine,
 };
 
-function loadProgram(tsconfigPath: string): ts.Program {
+function loadProgram(tsconfigPath: string): IncrementalProgram {
   const format = (ds: readonly ts.Diagnostic[]): string =>
     ts.formatDiagnosticsWithColorAndContext(ds, diagnosticHost);
   const read = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
@@ -87,11 +100,63 @@ function loadProgram(tsconfigPath: string): ts.Program {
     tsconfigPath,
   );
   if (parsed.errors.length > 0) throw new Error(`tsconfig errors:\n${format(parsed.errors)}`);
-  return ts.createProgram({
+
+  const overlay = new Map<string, string>();
+  const sourceFileCache = new Map<string, ts.SourceFile>();
+  const baseHost = ts.createCompilerHost(parsed.options);
+  const host: ts.CompilerHost = {
+    ...baseHost,
+    getSourceFile: (filename, langVer) => {
+      const cached = sourceFileCache.get(filename);
+      if (cached) return cached;
+      const content = overlay.get(filename) ?? baseHost.readFile(filename);
+      if (content === undefined) return undefined;
+      const sf = ts.createSourceFile(filename, content, langVer, true);
+      sourceFileCache.set(filename, sf);
+      return sf;
+    },
+    readFile: (f) => overlay.get(f) ?? baseHost.readFile(f),
+    fileExists: (f) => overlay.has(f) || baseHost.fileExists(f),
+  };
+
+  const programOptions = {
     rootNames: parsed.fileNames,
     options: parsed.options,
     projectReferences: parsed.projectReferences,
-  });
+    host,
+  };
+
+  let program = ts.createProgram(programOptions);
+  let checker = program.getTypeChecker();
+  let dirty = false;
+
+  const rebuild = (): void => {
+    if (!dirty) return;
+    program = ts.createProgram({ ...programOptions, oldProgram: program });
+    checker = program.getTypeChecker();
+    dirty = false;
+  };
+
+  return {
+    getProgram: () => {
+      rebuild();
+      return program;
+    },
+    getChecker: () => {
+      rebuild();
+      return checker;
+    },
+    getContents: (filePath) => {
+      const content = overlay.get(filePath) ?? baseHost.readFile(filePath);
+      if (content === undefined) throw new Error(`cannot read ${filePath}`);
+      return content;
+    },
+    setContents: (filePath, newContents) => {
+      overlay.set(filePath, newContents);
+      sourceFileCache.delete(filePath);
+      dirty = true;
+    },
+  };
 }
 
 const isCast = (n: ts.Node): n is ts.AssertionExpression =>
@@ -109,11 +174,69 @@ const cutRangeFor = (cast: ts.AssertionExpression, sf: ts.SourceFile): CutRange 
     ? { cutStart: cast.expression.end, cutEnd: cast.end }
     : { cutStart: cast.getStart(sf), cutEnd: cast.expression.getStart(sf) };
 
-function collectAssertions(program: ts.Program): { files: ts.SourceFile[]; assertions: Assertion[] } {
+type AnalyzableFunctionLike =
+  | ts.FunctionDeclaration
+  | ts.FunctionExpression
+  | ts.ArrowFunction
+  | ts.MethodDeclaration
+  | ts.GetAccessorDeclaration;
+
+// Constructors and setters have bodies but no inferred return type; signature-only kinds have no body.
+const isAnalyzableFunctionLike = (n: ts.Node): n is AnalyzableFunctionLike =>
+  ts.isFunctionDeclaration(n) ||
+  ts.isFunctionExpression(n) ||
+  ts.isArrowFunction(n) ||
+  ts.isMethodDeclaration(n) ||
+  ts.isGetAccessorDeclaration(n);
+
+function locateFunctionLikeAtPos(
+  sf: ts.SourceFile,
+  pos: number,
+): AnalyzableFunctionLike | undefined {
+  let found: AnalyzableFunctionLike | undefined;
+  const walk = (node: ts.Node): true | undefined => {
+    if (pos < node.getStart(sf) || pos >= node.getEnd()) return undefined;
+    if (isAnalyzableFunctionLike(node) && node.getStart(sf) === pos) {
+      found = node;
+      return true;
+    }
+    return ts.forEachChild(node, walk);
+  };
+  walk(sf);
+  return found;
+}
+
+function collectAssertions(ip: IncrementalProgram): {
+  files: ts.SourceFile[];
+  assertions: Assertion[];
+  preserved: number;
+} {
+  const program = ip.getProgram();
+  const checker = ip.getChecker();
+  const isAnyOperand = (e: ts.Expression): boolean =>
+    (checker.getTypeAtLocation(e).flags & ts.TypeFlags.Any) !== 0;
+  const isAnyType = (t: ts.TypeNode): boolean =>
+    (checker.getTypeFromTypeNode(t).flags & ts.TypeFlags.Any) !== 0;
+  const fnContextCache = new Map<ts.Node, FnContext | undefined>();
+  const computeFnContext = (node: ts.Node, sf: ts.SourceFile): FnContext | undefined => {
+    const fn = ts.findAncestor(node.parent, isAnalyzableFunctionLike);
+    if (!fn) return undefined;
+    if (fnContextCache.has(fn)) return fnContextCache.get(fn);
+    const sig = fn.type ? undefined : checker.getSignatureFromDeclaration(fn);
+    const result = sig
+      ? {
+          fnStartPos: fn.getStart(sf),
+          fnOriginalReturnType: checker.typeToString(sig.getReturnType()),
+        }
+      : undefined;
+    fnContextCache.set(fn, result);
+    return result;
+  };
   const files = program.getSourceFiles().filter(
     (sf) => !sf.isDeclarationFile && !program.isSourceFileFromExternalLibrary(sf),
   );
   const assertions: Assertion[] = [];
+  let preserved = 0;
   for (const sf of files) {
     const handled = new Set<ts.Node>();
     const visit = (node: ts.Node): void => {
@@ -124,37 +247,49 @@ function collectAssertions(program: ts.Program): { files: ts.SourceFile[]; asser
         const cast = node as ts.AssertionExpression;
         const inner = unwrapParens(cast.expression);
         if (isCast(inner) && isAnyKeyword(inner.type)) {
-          // `x as any as T`: outer rides on the inner — attempted only if the inner removes cleanly, else it would silently widen to `any`.
+          // `x as any as T`: when the operand is `any`, the outer `as T` is the narrowing and must stay.
+          const operandIsAny = isAnyOperand(inner.expression);
           assertions.push({
             filePath: sf.fileName,
             ...cutRangeFor(inner, sf),
-            pendingOuter: cutRangeFor(cast, sf),
+            pendingOuter: operandIsAny ? undefined : cutRangeFor(cast, sf),
+            fnContext: computeFnContext(cast, sf),
           });
+          if (operandIsAny) preserved++;
           handled.add(inner);
+        } else if (isAnyOperand(cast.expression) && !isAnyType(cast.type)) {
+          // Removing a cast whose operand is `any` would silently let `any` propagate as `T`.
+          preserved++;
         } else {
-          assertions.push({ filePath: sf.fileName, ...cutRangeFor(cast, sf) });
+          assertions.push({
+            filePath: sf.fileName,
+            ...cutRangeFor(cast, sf),
+            fnContext: computeFnContext(cast, sf),
+          });
         }
       }
       ts.forEachChild(node, visit);
     };
     visit(sf);
   }
-  return { files, assertions };
+  return { files, assertions, preserved };
 }
 
 function main(): void {
   try {
     const project = resolveProject();
     const tsgoBin = resolveTsgoBin();
-    const program = loadProgram(project);
-    run(project, tsgoBin, program);
+    const ip = loadProgram(project);
+    run(project, tsgoBin, ip);
   } catch (e) {
     err(e instanceof Error ? e.message : String(e));
     process.exit(2);
   }
 }
 
-function run(project: string, tsgoBin: string, program: ts.Program): void {
+type TryResult = 'removed' | 'reverted' | 'preserved';
+
+function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
   log(`project = ${project}`);
   log(`tsgo    = ${tsgoBin}`);
   log('running initial typecheck...');
@@ -166,63 +301,93 @@ function run(project: string, tsgoBin: string, program: ts.Program): void {
     process.exit(1);
   }
 
-  const { files, assertions } = collectAssertions(program);
+  const { files, assertions, preserved: initialPreserved } = collectAssertions(ip);
+  let preserved = initialPreserved;
   let total = 0;
   for (const a of assertions) total += a.pendingOuter ? 2 : 1;
   log(`scanned ${files.length} files, found ${total} type assertions`);
+  if (preserved > 0)
+    log(`(${preserved} cast${preserved === 1 ? '' : 's'} preserved by rule: operand is \`any\`)`);
 
   assertions.sort((a, b) => a.filePath.localeCompare(b.filePath) || b.cutStart - a.cutStart);
 
   let removed = 0;
+  let revertedByTsgo = 0;
   let progress = 0;
   const changedFiles = new Set<string>();
-  const contents = new Map<string, string>();
 
-  const tryRemove = (filePath: string, cut: CutRange): boolean => {
-    const before = contents.get(filePath) ?? readFileSync(filePath, 'utf8');
-    const after = before.slice(0, cut.cutStart) + before.slice(cut.cutEnd);
-    writeFileSync(filePath, after);
-    const ok = runTsgo(tsgoBin, project).ok;
-    if (ok) {
-      contents.set(filePath, after);
-    } else {
-      writeFileSync(filePath, before);
-      contents.set(filePath, before);
-    }
-    return ok;
+  const checkReturnTypeStable = (filePath: string, fnContext: FnContext): boolean => {
+    const sf = ip.getProgram().getSourceFile(filePath);
+    const fn = sf ? locateFunctionLikeAtPos(sf, fnContext.fnStartPos) : undefined;
+    if (!fn) return false;
+    const checker = ip.getChecker();
+    const sig = checker.getSignatureFromDeclaration(fn);
+    if (!sig) return false;
+    return checker.typeToString(sig.getReturnType()) === fnContext.fnOriginalReturnType;
   };
 
-  const reportStep = (filePath: string, ok: boolean): void => {
+  const tryRemove = (
+    filePath: string,
+    cut: CutRange & { fnContext?: FnContext },
+  ): TryResult => {
+    const before = ip.getContents(filePath);
+    const after = before.slice(0, cut.cutStart) + before.slice(cut.cutEnd);
+    const apply = (content: string): void => {
+      writeFileSync(filePath, content);
+      ip.setContents(filePath, content);
+    };
+    apply(after);
+    if (!runTsgo(tsgoBin, project).ok) {
+      apply(before);
+      return 'reverted';
+    }
+    if (cut.fnContext && !checkReturnTypeStable(filePath, cut.fnContext)) {
+      apply(before);
+      return 'preserved';
+    }
+    return 'removed';
+  };
+
+  const reportStep = (filePath: string, label: string): void => {
     progress++;
-    log(`[${progress}/${total}] ${relative(process.cwd(), filePath)} - ${ok ? 'removed' : 'kept'}`);
+    log(`[${progress}/${total}] ${relative(process.cwd(), filePath)} - ${label}`);
+  };
+
+  const bump = (r: TryResult): void => {
+    if (r === 'removed') removed++;
+    else if (r === 'preserved') preserved++;
+    else revertedByTsgo++;
   };
 
   for (const a of assertions) {
-    const ok = tryRemove(a.filePath, a);
-    reportStep(a.filePath, ok);
-    if (ok) {
-      removed++;
-      changedFiles.add(a.filePath);
-      if (a.pendingOuter) {
-        // Inner removal shifts positions >= a.cutEnd left by W; an angle-bracket outer sits before the inner and needs no shift.
-        const w = a.cutEnd - a.cutStart;
-        const shift = a.pendingOuter.cutStart >= a.cutEnd ? w : 0;
-        const okOuter = tryRemove(a.filePath, {
-          cutStart: a.pendingOuter.cutStart - shift,
-          cutEnd: a.pendingOuter.cutEnd - shift,
-        });
-        reportStep(a.filePath, okOuter);
-        if (okOuter) removed++;
-      }
-    } else if (a.pendingOuter) {
-      reportStep(a.filePath, false);
+    const r = tryRemove(a.filePath, a);
+    reportStep(a.filePath, r);
+    bump(r);
+    if (r === 'removed') changedFiles.add(a.filePath);
+    if (!a.pendingOuter) continue;
+    if (r !== 'removed') {
+      // Outer is blocked; inherits the inner's outcome bucket.
+      reportStep(a.filePath, r);
+      bump(r);
+      continue;
     }
+    // Inner removal shifts positions >= cutEnd by W; angle-bracket outer sits before the inner and needs no shift.
+    const w = a.cutEnd - a.cutStart;
+    const shift = a.pendingOuter.cutStart >= a.cutEnd ? w : 0;
+    const rOuter = tryRemove(a.filePath, {
+      cutStart: a.pendingOuter.cutStart - shift,
+      cutEnd: a.pendingOuter.cutEnd - shift,
+      fnContext: a.fnContext,
+    });
+    reportStep(a.filePath, rOuter);
+    bump(rOuter);
   }
 
   console.log('---');
   console.log(`total assertions found:    ${total}`);
   console.log(`removed assertions:        ${removed}`);
-  console.log(`kept/reverted assertions:  ${total - removed}`);
+  console.log(`reverted by typecheck:     ${revertedByTsgo}`);
+  console.log(`preserved by rule:         ${preserved}`);
   console.log(`files changed:             ${changedFiles.size}`);
   for (const f of changedFiles) {
     console.log(`- ${relative(process.cwd(), f)}`);
