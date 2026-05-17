@@ -164,6 +164,8 @@ const isCast = (n: ts.Node): n is ts.AssertionExpression =>
 
 const isAnyKeyword = (t: ts.TypeNode): boolean => t.kind === ts.SyntaxKind.AnyKeyword;
 
+const isNeverKeyword = (t: ts.TypeNode): boolean => t.kind === ts.SyntaxKind.NeverKeyword;
+
 const unwrapParens = (e: ts.Expression): ts.Expression => {
   while (ts.isParenthesizedExpression(e)) e = e.expression;
   return e;
@@ -246,7 +248,10 @@ function collectAssertions(ip: IncrementalProgram): {
       if (candidate && !handled.has(node)) {
         const cast = node as ts.AssertionExpression;
         const inner = unwrapParens(cast.expression);
-        if (isCast(inner) && isAnyKeyword(inner.type)) {
+        if (isNeverKeyword(cast.type)) {
+          // `as never` is almost always an intentional type hack; preserve it.
+          preserved++;
+        } else if (isCast(inner) && isAnyKeyword(inner.type)) {
           // `x as any as T`: when the operand is `any`, the outer `as T` is the narrowing and must stay.
           const operandIsAny = isAnyOperand(inner.expression);
           assertions.push({
@@ -307,7 +312,7 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
   for (const a of assertions) total += a.pendingOuter ? 2 : 1;
   log(`scanned ${files.length} files, found ${total} type assertions`);
   if (preserved > 0)
-    log(`(${preserved} cast${preserved === 1 ? '' : 's'} preserved by rule: operand is \`any\`)`);
+    log(`(${preserved} cast${preserved === 1 ? '' : 's'} preserved by rule)`);
 
   assertions.sort((a, b) => a.filePath.localeCompare(b.filePath) || b.cutStart - a.cutStart);
 

@@ -163,6 +163,64 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.filesChanged, 0);
   });
 
+  test('never removes `as never`, even when the resulting code would typecheck', (t) => {
+    const fx = makeFixture(t);
+    const src = [
+      'export function impossible(): never { throw new Error(); }\n',
+      'export const x = impossible() as never;\n',
+    ].join('');
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 0);
+    assert.equal(s.removed, 0);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('never removes `<never>` angle-bracket cast, even when the resulting code would typecheck', (t) => {
+    const fx = makeFixture(t);
+    const src = [
+      'export function impossible(): never { throw new Error(); }\n',
+      'export const x = <never>impossible();\n',
+    ].join('');
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 0);
+    assert.equal(s.removed, 0);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('collapses `x as any as never` to `x as never`: outer preserved, inner redundant', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: string): never {\n  throw x as any as never;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: string): never {\n  throw x as never;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 1);
+    assert.equal(s.removed, 1);
+    assert.equal(s.preserved, 1);
+  });
+
   test('strips nested `as A as B` chain when both are redundant', (t) => {
     const fx = makeFixture(t);
     fx.write('src/a.ts', 'export const x = "hi" as string as string;\n');
