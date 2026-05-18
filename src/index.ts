@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { existsSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, relative, resolve as pathResolve } from 'node:path';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import ts from 'typescript';
@@ -29,35 +29,33 @@ interface IncrementalProgram {
   setContents(filePath: string, newContents: string): void;
 }
 
-const log = (msg: string): void => console.log(`asserticide: ${msg}`);
-const err = (msg: string): void => console.error(`asserticide: ${msg}`);
+const log = (message: string): void => console.log(`asserticide: ${message}`);
+const error = (message: string): void => console.error(`asserticide: ${message}`);
 
 function resolveProject(): string {
   const { positionals } = parseArgs({ allowPositionals: true, strict: true });
   if (positionals.length > 1) {
-    throw new Error(
-      `expected at most one tsconfig path, got ${positionals.length}`,
-    );
+    throw new Error(`expected at most one tsconfig path, got ${positionals.length}`);
   }
-  const resolved = pathResolve(positionals[0] ?? 'tsconfig.json');
+  const resolved = path.resolve(positionals[0] ?? 'tsconfig.json');
   return statSync(resolved, { throwIfNoEntry: false })?.isDirectory()
-    ? pathResolve(resolved, 'tsconfig.json')
+    ? path.resolve(resolved, 'tsconfig.json')
     : resolved;
 }
 
 function resolveTsgoBin(): string {
   const exe = process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo';
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
   const seen = new Set<string>();
-  for (const start of [moduleDir, process.cwd()]) {
-    let dir = pathResolve(start);
-    while (!seen.has(dir)) {
-      seen.add(dir);
-      const candidate = pathResolve(dir, 'node_modules', '.bin', exe);
+  for (const start of [moduleDirectory, process.cwd()]) {
+    let directory = path.resolve(start);
+    while (!seen.has(directory)) {
+      seen.add(directory);
+      const candidate = path.resolve(directory, 'node_modules', '.bin', exe);
       if (existsSync(candidate)) return candidate;
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
+      const parent = path.dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
     }
   }
   throw new Error(
@@ -65,10 +63,7 @@ function resolveTsgoBin(): string {
   );
 }
 
-function runTsgo(
-  bin: string,
-  project: string,
-): { ok: boolean; output: string } {
+function runTsgo(bin: string, project: string): { ok: boolean; output: string } {
   const result =
     process.platform === 'win32'
       ? spawnSync(`"${bin}" --noEmit --project "${project}"`, {
@@ -83,16 +78,11 @@ function runTsgo(
   if (result.error) {
     return { ok: false, output: result.error.message };
   }
-  return {
-    ok: result.status === 0,
-    output: (result.stdout ?? '') + (result.stderr ?? ''),
-  };
+  return { ok: result.status === 0, output: (result.stdout ?? '') + (result.stderr ?? '') };
 }
 
 const diagnosticHost: ts.FormatDiagnosticsHost = {
-  getCanonicalFileName: ts.sys.useCaseSensitiveFileNames
-    ? (f) => f
-    : (f) => f.toLowerCase(),
+  getCanonicalFileName: ts.sys.useCaseSensitiveFileNames ? (f) => f : (f) => f.toLowerCase(),
   getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
   getNewLine: () => ts.sys.newLine,
 };
@@ -101,29 +91,31 @@ function loadProgram(tsconfigPath: string): IncrementalProgram {
   const format = (ds: readonly ts.Diagnostic[]): string =>
     ts.formatDiagnosticsWithColorAndContext(ds, diagnosticHost);
   const read = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
-  if (read.error)
+  if (read.error) {
     throw new Error(`failed to read ${tsconfigPath}:\n${format([read.error])}`);
+  }
   const parsed = ts.parseJsonConfigFileContent(
     read.config,
     ts.sys,
-    dirname(tsconfigPath),
+    path.dirname(tsconfigPath),
     undefined,
     tsconfigPath,
   );
-  if (parsed.errors.length > 0)
+  if (parsed.errors.length > 0) {
     throw new Error(`tsconfig errors:\n${format(parsed.errors)}`);
+  }
 
   const overlay = new Map<string, string>();
   const sourceFileCache = new Map<string, ts.SourceFile>();
   const baseHost = ts.createCompilerHost(parsed.options);
   const host: ts.CompilerHost = {
     ...baseHost,
-    getSourceFile: (filename, langVer) => {
+    getSourceFile: (filename, langVersion) => {
       const cached = sourceFileCache.get(filename);
       if (cached) return cached;
       const content = overlay.get(filename) ?? baseHost.readFile(filename);
-      if (content === undefined) return undefined;
-      const sf = ts.createSourceFile(filename, content, langVer, true);
+      if (content === undefined) return;
+      const sf = ts.createSourceFile(filename, content, langVersion, true);
       sourceFileCache.set(filename, sf);
       return sf;
     },
@@ -171,33 +163,25 @@ function loadProgram(tsconfigPath: string): IncrementalProgram {
   };
 }
 
-const isAnyKeyword = (t: ts.TypeNode): boolean =>
-  t.kind === ts.SyntaxKind.AnyKeyword;
+const isAnyKeyword = (t: ts.TypeNode): boolean => t.kind === ts.SyntaxKind.AnyKeyword;
 
-const isNeverKeyword = (t: ts.TypeNode): boolean =>
-  t.kind === ts.SyntaxKind.NeverKeyword;
+const isNeverKeyword = (t: ts.TypeNode): boolean => t.kind === ts.SyntaxKind.NeverKeyword;
 
-const unwrapParens = (e: ts.Expression): ts.Expression => {
-  while (ts.isParenthesizedExpression(e)) e = e.expression;
-  return e;
+const unwrapParens = (expression: ts.Expression): ts.Expression => {
+  while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+  return expression;
 };
 
 type RemovableAssertion = ts.AssertionExpression | ts.NonNullExpression;
 
-const cutRangeFor = (
-  node: RemovableAssertion,
-  sf: ts.SourceFile,
-): CutRange =>
+const cutRangeFor = (node: RemovableAssertion, sf: ts.SourceFile): CutRange =>
   ts.isTypeAssertionExpression(node)
     ? { cutStart: node.getStart(sf), cutEnd: node.expression.getStart(sf) }
     : { cutStart: node.expression.end, cutEnd: node.end };
 
-const isInitializerOfUntypedVarDecl = (n: ts.Node): boolean => {
+const isInitializerOfUntypedVariableDecl = (n: ts.Node): boolean => {
   let p: ts.Node | undefined = n.parent;
-  while (
-    p &&
-    (ts.isParenthesizedExpression(p) || ts.isSatisfiesExpression(p))
-  ) {
+  while (p && (ts.isParenthesizedExpression(p) || ts.isSatisfiesExpression(p))) {
     p = p.parent;
   }
   return (
@@ -208,12 +192,12 @@ const isInitializerOfUntypedVarDecl = (n: ts.Node): boolean => {
   );
 };
 
-const chainBottomsAtObjectLiteral = (e: ts.Expression): boolean => {
-  let cur = unwrapParens(e);
-  while (ts.isAssertionExpression(cur) || ts.isSatisfiesExpression(cur)) {
-    cur = unwrapParens(cur.expression);
+const chainBottomsAtObjectLiteral = (expression: ts.Expression): boolean => {
+  let current = unwrapParens(expression);
+  while (ts.isAssertionExpression(current) || ts.isSatisfiesExpression(current)) {
+    current = unwrapParens(current.expression);
   }
-  return ts.isObjectLiteralExpression(cur);
+  return ts.isObjectLiteralExpression(current);
 };
 
 type AnalyzableFunctionLike =
@@ -251,22 +235,15 @@ function locateFunctionLikeAtPos(
 function collectAssertions(
   ip: IncrementalProgram,
   strictNullChecks: boolean,
-): {
-  files: ts.SourceFile[];
-  assertions: Assertion[];
-  preserved: number;
-} {
+): { files: ts.SourceFile[]; assertions: Assertion[]; preserved: number } {
   const program = ip.getProgram();
   const checker = ip.getChecker();
-  const isAnyOperand = (e: ts.Expression): boolean =>
-    (checker.getTypeAtLocation(e).flags & ts.TypeFlags.Any) !== 0;
+  const isAnyOperand = (expression: ts.Expression): boolean =>
+    (checker.getTypeAtLocation(expression).flags & ts.TypeFlags.Any) !== 0;
   const isAnyType = (t: ts.TypeNode): boolean =>
     (checker.getTypeFromTypeNode(t).flags & ts.TypeFlags.Any) !== 0;
   const fnContextCache = new Map<ts.Node, FnContext | undefined>();
-  const computeFnContext = (
-    node: ts.Node,
-    sf: ts.SourceFile,
-  ): FnContext | undefined => {
+  const computeFnContext = (node: ts.Node, sf: ts.SourceFile): FnContext | undefined => {
     const fn = ts.findAncestor(node.parent, isAnalyzableFunctionLike);
     if (!fn) return undefined;
     if (fnContextCache.has(fn)) return fnContextCache.get(fn);
@@ -282,10 +259,7 @@ function collectAssertions(
   };
   const files = program
     .getSourceFiles()
-    .filter(
-      (sf) =>
-        !sf.isDeclarationFile && !program.isSourceFileFromExternalLibrary(sf),
-    );
+    .filter((sf) => !sf.isDeclarationFile && !program.isSourceFileFromExternalLibrary(sf));
   const assertions: Assertion[] = [];
   let preserved = 0;
   for (const sf of files) {
@@ -311,14 +285,11 @@ function collectAssertions(
           preserved++;
         } else if (
           chainBottomsAtObjectLiteral(node.expression) &&
-          isInitializerOfUntypedVarDecl(node)
+          isInitializerOfUntypedVariableDecl(node)
         ) {
           // `{...} as T` on an object-literal initializer drives the literal's contextual type.
           preserved++;
-        } else if (
-          ts.isAssertionExpression(inner) &&
-          isAnyKeyword(inner.type)
-        ) {
+        } else if (ts.isAssertionExpression(inner) && isAnyKeyword(inner.type)) {
           // `x as any as T`: when the operand is `any`, the outer `as T` is the narrowing and must stay.
           const operandIsAny = isAnyOperand(inner.expression);
           assertions.push({
@@ -353,8 +324,8 @@ function main(): void {
     const tsgoBin = resolveTsgoBin();
     const ip = loadProgram(project);
     run(project, tsgoBin, ip);
-  } catch (e) {
-    err(e instanceof Error ? e.message : String(e));
+  } catch (error_) {
+    error(error_ instanceof Error ? error_.message : String(error_));
     process.exit(2);
   }
 }
@@ -370,13 +341,14 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
 
   log(`project = ${project}`);
   log(`tsgo    = ${tsgoBin}`);
-  if (!strictNullChecks)
+  if (!strictNullChecks) {
     log('strictNullChecks is off; non-null assertions will not be touched');
+  }
   log('running initial typecheck...');
 
   const initial = runTsgo(tsgoBin, project);
   if (!initial.ok) {
-    err('initial typecheck failed; refusing to modify files.');
+    error('initial typecheck failed; refusing to modify files.');
     if (initial.output.trim()) console.error(initial.output);
     process.exit(1);
   }
@@ -391,42 +363,28 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
   for (const a of assertions) candidates += a.pendingOuter ? 2 : 1;
   const total = candidates + initialPreserved;
   log(`scanned ${files.length} files, found ${total} assertions`);
-  if (preserved > 0)
-    log(
-      `(${preserved} assertion${preserved === 1 ? '' : 's'} preserved by rule)`,
-    );
+  if (preserved > 0) {
+    log(`(${preserved} assertion${preserved === 1 ? '' : 's'} preserved by rule)`);
+  }
 
-  assertions.sort(
-    (a, b) => a.filePath.localeCompare(b.filePath) || b.cutStart - a.cutStart,
-  );
+  assertions.sort((a, b) => a.filePath.localeCompare(b.filePath) || b.cutStart - a.cutStart);
 
   let removed = 0;
   let revertedByTsgo = 0;
   let progress = 0;
   const changedFiles = new Set<string>();
 
-  const checkReturnTypeStable = (
-    filePath: string,
-    fnContext: FnContext,
-  ): boolean => {
+  const checkReturnTypeStable = (filePath: string, fnContext: FnContext): boolean => {
     const sf = ip.getProgram().getSourceFile(filePath);
-    const fn = sf
-      ? locateFunctionLikeAtPos(sf, fnContext.fnStartPos)
-      : undefined;
+    const fn = sf ? locateFunctionLikeAtPos(sf, fnContext.fnStartPos) : undefined;
     if (!fn) return false;
     const checker = ip.getChecker();
     const sig = checker.getSignatureFromDeclaration(fn);
     if (!sig) return false;
-    return (
-      checker.typeToString(sig.getReturnType()) ===
-      fnContext.fnOriginalReturnType
-    );
+    return checker.typeToString(sig.getReturnType()) === fnContext.fnOriginalReturnType;
   };
 
-  const tryRemove = (
-    filePath: string,
-    cut: CutRange & { fnContext?: FnContext },
-  ): TryResult => {
+  const tryRemove = (filePath: string, cut: CutRange & { fnContext?: FnContext }): TryResult => {
     const before = ip.getContents(filePath);
     const after = before.slice(0, cut.cutStart) + before.slice(cut.cutEnd);
     const apply = (content: string): void => {
@@ -447,9 +405,7 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
 
   const reportStep = (filePath: string, label: string): void => {
     progress++;
-    log(
-      `[${progress}/${candidates}] ${relative(process.cwd(), filePath)} - ${label}`,
-    );
+    log(`[${progress}/${candidates}] ${path.relative(process.cwd(), filePath)} - ${label}`);
   };
 
   const bump = (r: TryResult): void => {
@@ -489,7 +445,7 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
   console.log(`preserved by rule:         ${preserved}`);
   console.log(`files changed:             ${changedFiles.size}`);
   for (const f of changedFiles) {
-    console.log(`- ${relative(process.cwd(), f)}`);
+    console.log(`- ${path.relative(process.cwd(), f)}`);
   }
 }
 

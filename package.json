@@ -1,8 +1,6 @@
 {
   "author": "Georgii Dolzhykov <thorn.mailbox@gmail.com>",
-  "bin": {
-    "asserticide": "./dist/index.js"
-  },
+  "bin": "./dist/index.js",
   "bugs": {
     "url": "https://github.com/thorn0/asserticide/issues"
   },
@@ -12,7 +10,13 @@
   },
   "description": "Kill every redundant type assertion in your TypeScript codebase",
   "devDependencies": {
-    "@types/node": "^24.0.0"
+    "@th2025/eslint-config": "0.0.27",
+    "@types/node": "^24.0.0",
+    "cspell": "10.0.0",
+    "eslint": "9",
+    "knip": "6.14.1",
+    "prettier": "3.8.3",
+    "prettier-plugin-organize-imports": "4.3.0"
   },
   "engines": {
     "node": ">=24"
@@ -36,19 +40,54 @@
   ],
   "license": "MIT",
   "name": "asserticide",
+  "knip": {
+    "entry": [
+      "src/index.ts",
+      "test/**/*.test.ts"
+    ],
+    "project": [
+      "src/**",
+      "test/**"
+    ],
+    "ignoreDependencies": [
+      "@typescript/native-preview"
+    ]
+  },
   "prettier": {
     "objectWrap": "collapse",
-    "singleQuote": true
+    "printWidth": 100,
+    "singleQuote": true,
+    "plugins": [
+      "prettier-plugin-organize-imports"
+    ],
+    "overrides": [
+      {
+        "files": [
+          "cspell.json"
+        ],
+        "options": {
+          "parser": "json-stringify"
+        }
+      }
+    ]
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/thorn0/asserticide.git"
   },
   "scripts": {
-    "build": "tsc",
-    "prepare": "npm run build",
-    "test": "npm run build && node --test test/asserticide.test.ts"
+    "build": "tsc -p tsconfig.build.json",
+    "check": "yarn lint && yarn knip && prettier --cache --check . && tsc --noEmit && yarn test && yarn spellcheck && echo \"All checks passed!\"",
+    "check:fix": "yarn lint --fix && yarn knip --fix && yarn format && tsc --noEmit && yarn test && yarn spellcheck && echo \"All checks passed and fixes applied!\"",
+    "format": "prettier --cache --log-level warn -w .",
+    "knip": "knip --no-progress --cache",
+    "lint": "eslint --cache --cache-location node_modules/.cache/eslint/ .",
+    "prepare": "yarn build",
+    "spellcheck": "cspell --no-progress --no-summary --no-color --unique --no-must-find-files .",
+    "test": "yarn build && node --test test/asserticide.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "type": "module",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "packageManager": "yarn@4.14.1"
 }

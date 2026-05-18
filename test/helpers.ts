@@ -1,12 +1,12 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import type { TestContext } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const asserticideEntry = resolve(here, '..', 'dist', 'index.js');
+const here = path.dirname(fileURLToPath(import.meta.url));
+const asserticideEntry = path.resolve(here, '..', 'dist', 'index.js');
 
 export const defaultTsconfig = {
   compilerOptions: {
@@ -39,12 +39,12 @@ export interface FixtureOptions {
 }
 
 export function makeFixture(t: TestContext, options: FixtureOptions = {}): Fixture {
-  const dir = mkdtempSync(join(tmpdir(), 'asserticide-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const directory = mkdtempSync(path.join(tmpdir(), 'asserticide-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
 
   const write = (relPath: string, content: string): void => {
-    const full = join(dir, relPath);
-    mkdirSync(dirname(full), { recursive: true });
+    const full = path.join(directory, relPath);
+    mkdirSync(path.dirname(full), { recursive: true });
     writeFileSync(full, content);
   };
 
@@ -53,18 +53,18 @@ export function makeFixture(t: TestContext, options: FixtureOptions = {}): Fixtu
   }
 
   return {
-    dir,
+    dir: directory,
     write,
     writeJson(relPath, data) {
       write(relPath, JSON.stringify(data, null, 2));
     },
     read(relPath) {
-      return readFileSync(join(dir, relPath), 'utf8');
+      return readFileSync(path.join(directory, relPath), 'utf8');
     },
     run(args) {
-      const finalArgs = args ?? [join(dir, 'tsconfig.json')];
+      const finalArgs = args ?? [path.join(directory, 'tsconfig.json')];
       const result = spawnSync(process.execPath, [asserticideEntry, ...finalArgs], {
-        cwd: dir,
+        cwd: directory,
         encoding: 'utf8',
       });
       return {
@@ -86,8 +86,10 @@ export interface Summary {
 
 export function parseSummary(stdout: string): Summary {
   const grab = (label: string): number => {
-    const m = stdout.match(new RegExp(`${label}\\s+(\\d+)`));
-    if (!m) throw new Error(`parseSummary: '${label}' not found in:\n${stdout}`);
+    const m = new RegExp(String.raw`${label}\s+(\d+)`).exec(stdout);
+    if (!m) {
+      throw new Error(`parseSummary: '${label}' not found in:\n${stdout}`);
+    }
     return Number(m[1]);
   };
   return {

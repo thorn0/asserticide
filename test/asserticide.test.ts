@@ -1,5 +1,5 @@
-import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, test } from 'node:test';
 import { defaultTsconfig, makeFixture, parseSummary } from './helpers.ts';
 
 describe('asserticide', { concurrency: true }, () => {
@@ -39,13 +39,13 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('keeps a necessary `as` assertion', (t) => {
     const fx = makeFixture(t);
-    const src = 'export function f(v: unknown) { return (v as { n: number }).n; }\n';
-    fx.write('src/a.ts', src);
+    const source = 'export function f(v: unknown) { return (v as { n: number }).n; }\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.removed, 0);
     assert.equal(s.reverted, 1);
@@ -67,13 +67,13 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('keeps a necessary `<Type>` angle-bracket assertion', (t) => {
     const fx = makeFixture(t);
-    const src = 'export function f(v: unknown) { return (<{ n: number }>v).n; }\n';
-    fx.write('src/a.ts', src);
+    const source = 'export function f(v: unknown) { return (<{ n: number }>v).n; }\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.removed, 0);
     assert.equal(s.reverted, 1);
@@ -94,13 +94,13 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('exits cleanly when project has no `as` assertions', (t) => {
     const fx = makeFixture(t);
-    const src = 'export const greet = (name: string) => `hi, ${name}`;\n';
-    fx.write('src/a.ts', src);
+    const source = 'export const greet = (name: string) => `hi, ${name}`;\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     assert.deepEqual(parseSummary(r.stdout), {
       total: 0,
       removed: 0,
@@ -146,17 +146,17 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('never removes `as const`, even when the resulting code would typecheck', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'export const literal = "hi" as const;\n',
       'export const tuple = [1, 2, 3] as const;\n',
       'export const obj = { kind: "a", value: 1 } as const;\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 0);
     assert.equal(s.removed, 0);
@@ -165,16 +165,16 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('never removes `as never`, even when the resulting code would typecheck', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'export function impossible(): never { throw new Error(); }\n',
       'export const x = impossible() as never;\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 1);
     assert.equal(s.removed, 0);
@@ -184,16 +184,16 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('never removes `<never>` angle-bracket assertion, even when the resulting code would typecheck', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'export function impossible(): never { throw new Error(); }\n',
       'export const x = <never>impossible();\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 1);
     assert.equal(s.removed, 0);
@@ -203,10 +203,7 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('collapses `x as any as never` to `x as never`: outer preserved, inner redundant', (t) => {
     const fx = makeFixture(t);
-    fx.write(
-      'src/a.ts',
-      'export function f(x: string): never {\n  throw x as any as never;\n}\n',
-    );
+    fx.write('src/a.ts', 'export function f(x: string): never {\n  throw x as any as never;\n}\n');
 
     const r = fx.run();
 
@@ -236,18 +233,18 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('keeps both assertions of `as any as T` when the inner cannot be removed', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'interface Animated { animVal: string }\n',
       'export function f(s: string): string {\n',
       '  return (s as any as Animated).animVal;\n',
       '}\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 2);
     assert.equal(s.removed, 0);
@@ -256,18 +253,18 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('keeps both assertions of `<T><any>x` when the inner cannot be removed', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'interface Animated { animVal: string }\n',
       'export function f(s: string): string {\n',
       '  return (<Animated><any>s).animVal;\n',
       '}\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 2);
     assert.equal(s.removed, 0);
@@ -284,10 +281,7 @@ describe('asserticide', { concurrency: true }, () => {
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(
-      fx.read('src/a.ts'),
-      'export function f(s: string): string {\n  return s;\n}\n',
-    );
+    assert.equal(fx.read('src/a.ts'), 'export function f(s: string): string {\n  return s;\n}\n');
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 2);
     assert.equal(s.removed, 2);
@@ -315,18 +309,12 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('removes an `as any` assertion when the operand is already `any`', (t) => {
     const fx = makeFixture(t);
-    fx.write(
-      'src/a.ts',
-      'export function f(x: any) {\n  return x as any;\n}\n',
-    );
+    fx.write('src/a.ts', 'export function f(x: any) {\n  return x as any;\n}\n');
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(
-      fx.read('src/a.ts'),
-      'export function f(x: any) {\n  return x;\n}\n',
-    );
+    assert.equal(fx.read('src/a.ts'), 'export function f(x: any) {\n  return x;\n}\n');
     const s = parseSummary(r.stdout);
     assert.equal(s.removed, 1);
     assert.equal(s.preserved, 0);
@@ -334,10 +322,7 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('removes an `as` assertion to an `any` alias when the operand is also `any`', (t) => {
     const fx = makeFixture(t);
-    fx.write(
-      'src/a.ts',
-      'type A = any;\nexport function f(x: any) {\n  return x as A;\n}\n',
-    );
+    fx.write('src/a.ts', 'type A = any;\nexport function f(x: any) {\n  return x as A;\n}\n');
 
     const r = fx.run();
 
@@ -353,13 +338,13 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('keeps an `as` assertion when the operand has type `any`', (t) => {
     const fx = makeFixture(t);
-    const src = 'export function f(x: any): string {\n  return x as string;\n}\n';
-    fx.write('src/a.ts', src);
+    const source = 'export function f(x: any): string {\n  return x as string;\n}\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 1);
     assert.equal(s.removed, 0);
@@ -369,13 +354,13 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('keeps an angle-bracket assertion when the operand has type `any`', (t) => {
     const fx = makeFixture(t);
-    const src = 'export function f(x: any): string {\n  return <string>x;\n}\n';
-    fx.write('src/a.ts', src);
+    const source = 'export function f(x: any): string {\n  return <string>x;\n}\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 1);
     assert.equal(s.preserved, 1);
@@ -384,10 +369,7 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('collapses `x as any as T` to `x as T` when x is already `any`', (t) => {
     const fx = makeFixture(t);
-    fx.write(
-      'src/a.ts',
-      'export function f(x: any): string {\n  return x as any as string;\n}\n',
-    );
+    fx.write('src/a.ts', 'export function f(x: any): string {\n  return x as any as string;\n}\n');
 
     const r = fx.run();
 
@@ -404,10 +386,7 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('collapses `<T><any>x` to `<T>x` when x is already `any`', (t) => {
     const fx = makeFixture(t);
-    fx.write(
-      'src/a.ts',
-      'export function f(x: any): string {\n  return <string><any>x;\n}\n',
-    );
+    fx.write('src/a.ts', 'export function f(x: any): string {\n  return <string><any>x;\n}\n');
 
     const r = fx.run();
 
@@ -445,13 +424,13 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('preserves an assertion whose removal would widen an inferred return type', (t) => {
     const fx = makeFixture(t);
-    const src = 'export function f(x: string | number) {\n  return x as string;\n}\n';
-    fx.write('src/a.ts', src);
+    const source = 'export function f(x: string | number) {\n  return x as string;\n}\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
@@ -478,13 +457,13 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('preserves a `<T>` angle-bracket assertion whose removal would widen an inferred return type', (t) => {
     const fx = makeFixture(t);
-    const src = 'export function f(x: string | number) {\n  return <string>x;\n}\n';
-    fx.write('src/a.ts', src);
+    const source = 'export function f(x: string | number) {\n  return <string>x;\n}\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
@@ -492,13 +471,13 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('preserves an assertion inside an arrow function with inferred return type', (t) => {
     const fx = makeFixture(t);
-    const src = 'export const f = (x: string | number) => x as string;\n';
-    fx.write('src/a.ts', src);
+    const source = 'export const f = (x: string | number) => x as string;\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
@@ -506,14 +485,13 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('preserves an assertion inside a class method with inferred return type', (t) => {
     const fx = makeFixture(t);
-    const src =
-      'export class C {\n  m(x: string | number) {\n    return x as string;\n  }\n}\n';
-    fx.write('src/a.ts', src);
+    const source = 'export class C {\n  m(x: string | number) {\n    return x as string;\n  }\n}\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
@@ -560,16 +538,16 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('preserves an `as T` on an object literal in an untyped variable initializer', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'interface State { a?: number; b?: string }\n',
       'export const state = { a: 1 } as State;\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 1);
     assert.equal(s.preserved, 1);
@@ -578,16 +556,16 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('preserves an `<T>` angle-bracket assertion on an object literal in an untyped variable initializer', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'interface State { a?: number; b?: string }\n',
       'export const state = <State>{ a: 1 };\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
@@ -595,16 +573,16 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('preserves an `as T` on an object literal in an untyped `let` initializer', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'interface State { a?: number; b?: string }\n',
       'export let state = { a: 1 } as State;\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
   });
@@ -629,16 +607,16 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('preserves the outer `as T` of a `{...} as unknown as T` chain in an untyped variable initializer', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'interface State { req: string }\n',
       'export const state = { a: 1 } as unknown as State;\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
     assert.equal(s.reverted, 1);
@@ -671,32 +649,32 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('preserves the outer `as T` on an object literal wrapped in a `satisfies T` clause', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'interface State { a: number; b?: string }\n',
       'export const state = ({ a: 1 } as State) satisfies State;\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
   });
 
   test('preserves the outer `as T` over a `{...} satisfies U` operand in an untyped variable initializer', (t) => {
     const fx = makeFixture(t);
-    const src = [
+    const source = [
       'interface State { a: number; b?: string }\n',
       'export const state = ({ a: 1 } satisfies State) as State;\n',
     ].join('');
-    fx.write('src/a.ts', src);
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
   });
@@ -729,32 +707,25 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('removes a redundant non-null assertion `!`', (t) => {
     const fx = makeFixture(t);
-    fx.write(
-      'src/a.ts',
-      'export function f(x: string): string {\n  return x!;\n}\n',
-    );
+    fx.write('src/a.ts', 'export function f(x: string): string {\n  return x!;\n}\n');
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(
-      fx.read('src/a.ts'),
-      'export function f(x: string): string {\n  return x;\n}\n',
-    );
+    assert.equal(fx.read('src/a.ts'), 'export function f(x: string): string {\n  return x;\n}\n');
     const s = parseSummary(r.stdout);
     assert.equal(s.removed, 1);
   });
 
   test('keeps a necessary non-null assertion `!`', (t) => {
     const fx = makeFixture(t);
-    const src =
-      'export function f(x: string | undefined): string {\n  return x!;\n}\n';
-    fx.write('src/a.ts', src);
+    const source = 'export function f(x: string | undefined): string {\n  return x!;\n}\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.reverted, 1);
     assert.equal(s.filesChanged, 0);
@@ -762,13 +733,13 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('preserves a non-null assertion whose removal would widen an inferred return type', (t) => {
     const fx = makeFixture(t);
-    const src = 'export function f(x?: string) {\n  return x!;\n}\n';
-    fx.write('src/a.ts', src);
+    const source = 'export function f(x?: string) {\n  return x!;\n}\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
@@ -776,10 +747,7 @@ describe('asserticide', { concurrency: true }, () => {
 
   test('removes redundant chained non-null assertions', (t) => {
     const fx = makeFixture(t);
-    fx.write(
-      'src/a.ts',
-      'export function f(x: { y: string }): string {\n  return x!.y!;\n}\n',
-    );
+    fx.write('src/a.ts', 'export function f(x: { y: string }): string {\n  return x!.y!;\n}\n');
 
     const r = fx.run();
 
@@ -797,19 +765,16 @@ describe('asserticide', { concurrency: true }, () => {
     const fx = makeFixture(t, {
       tsconfig: {
         ...defaultTsconfig,
-        compilerOptions: {
-          ...defaultTsconfig.compilerOptions,
-          strict: false,
-        },
+        compilerOptions: { ...defaultTsconfig.compilerOptions, strict: false },
       },
     });
-    const src = 'export function f(x: string): string {\n  return x!;\n}\n';
-    fx.write('src/a.ts', src);
+    const source = 'export function f(x: string): string {\n  return x!;\n}\n';
+    fx.write('src/a.ts', source);
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(fx.read('src/a.ts'), src);
+    assert.equal(fx.read('src/a.ts'), source);
     assert.match(r.stdout, /strictNullChecks is off/);
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 1);
@@ -830,18 +795,12 @@ describe('asserticide', { concurrency: true }, () => {
         include: ['**/*.ts'],
       },
     });
-    fx.write(
-      'src/a.ts',
-      'export function f(x: string): string {\n  return x!;\n}\n',
-    );
+    fx.write('src/a.ts', 'export function f(x: string): string {\n  return x!;\n}\n');
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(
-      fx.read('src/a.ts'),
-      'export function f(x: string): string {\n  return x;\n}\n',
-    );
+    assert.equal(fx.read('src/a.ts'), 'export function f(x: string): string {\n  return x;\n}\n');
     const s = parseSummary(r.stdout);
     assert.equal(s.removed, 1);
   });
@@ -857,25 +816,22 @@ describe('asserticide', { concurrency: true }, () => {
         },
       },
     });
-    fx.write(
-      'src/a.ts',
-      'export function f(x: string): string {\n  return x!;\n}\n',
-    );
+    fx.write('src/a.ts', 'export function f(x: string): string {\n  return x!;\n}\n');
 
     const r = fx.run();
 
     assert.equal(r.exitCode, 0);
-    assert.equal(
-      fx.read('src/a.ts'),
-      'export function f(x: string): string {\n  return x;\n}\n',
-    );
+    assert.equal(fx.read('src/a.ts'), 'export function f(x: string): string {\n  return x;\n}\n');
     const s = parseSummary(r.stdout);
     assert.equal(s.removed, 1);
   });
 
   test('does not touch `as` assertions in node_modules source files', (t) => {
     const fx = makeFixture(t);
-    fx.write('src/a.ts', 'import { x } from "../node_modules/foo/index.js";\nexport const y = x;\n');
+    fx.write(
+      'src/a.ts',
+      'import { x } from "../node_modules/foo/index.js";\nexport const y = x;\n',
+    );
     const depSource = 'export const x = "redundant" as string;\n';
     fx.write('node_modules/foo/index.ts', depSource);
     fx.writeJson('node_modules/foo/package.json', { name: 'foo', type: 'module' });
@@ -887,9 +843,7 @@ describe('asserticide', { concurrency: true }, () => {
   });
 
   test('scans transitively imported files outside the include pattern', (t) => {
-    const fx = makeFixture(t, {
-      tsconfig: { ...defaultTsconfig, include: ['src/**/*.ts'] },
-    });
+    const fx = makeFixture(t, { tsconfig: { ...defaultTsconfig, include: ['src/**/*.ts'] } });
     fx.write('src/index.ts', 'import { x } from "../lib/util.js";\nexport const y = x;\n');
     fx.write('lib/util.ts', 'export const x = 7 as number;\n');
 

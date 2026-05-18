@@ -1,8 +1,22 @@
 {
-    "words": [
-        "asserticide",
-        "projectwide",
-        "tsgo",
-        "typechecks"
-    ]
+  "version": "0.2",
+  "language": "en",
+  "files": [
+    "**/*.{ts,tsx,js,jsx,json,md}"
+  ],
+  "ignorePaths": [
+    "node_modules",
+    "**/coverage/**",
+    "**/dist/**"
+  ],
+  "words": [
+    "asserticide",
+    "codemod",
+    "Dolzhykov",
+    "dont",
+    "Georgii",
+    "projectwide",
+    "tsgo",
+    "typechecks"
+  ]
 }

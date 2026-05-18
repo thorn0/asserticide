@@ -54,8 +54,8 @@ files changed:             54
 
 The difference is scale.
 
-[`@typescript-eslint/no-unnecessary-type-assertion`](https://typescript-eslint.io/rules/no-unnecessary-type-assertion/) works at the expression level: it reports an assertion when removing it preserves the expression type or still satisfies the contextual type at that position.
+The [`@typescript-eslint/no-unnecessary-type-assertion`](https://typescript-eslint.io/rules/no-unnecessary-type-assertion/) lint rule works at the expression level: it reports an assertion when removing it preserves the expression type or still satisfies the contextual type at that position.
 
-asserticide works at project level: it tries deleting each `as T`, `<T>x`, or `!`, runs `tsgo`, and keeps the edit if the checked project still typechecks and no [preservation rule](#preserved-by-rule) applies.
+asserticide works at project level: it tries deleting each type assertion, runs `tsgo`, and keeps the edit if the checked project still typechecks and no [preservation rule](#preserved-by-rule) applies.
 
 So asserticide can remove assertions with real local type effects when those effects are unused projectwide.
