@@ -47,3 +47,13 @@ files changed:             54
 - src/components/Grid.tsx
 - ...
 ```
+
+## How it compares to `no-unnecessary-type-assertion`
+
+The difference is scale.
+
+[`@typescript-eslint/no-unnecessary-type-assertion`](https://typescript-eslint.io/rules/no-unnecessary-type-assertion/) works at the expression level: it reports a type assertion when removing it preserves the expression type or still satisfies the contextual type at that position. It also handles non-null assertions like `x!`.
+
+asserticide works at project level: it tries deleting each `as T` or `<T>x`, runs `tsgo`, and keeps the edit if the checked project still typechecks and no [preservation rule](#preserved-by-rule) applies.
+
+So asserticide can remove assertions with real local type effects when those effects are unused projectwide.
