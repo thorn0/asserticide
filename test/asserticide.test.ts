@@ -801,6 +801,16 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(fx.read('src/a.ts'), 'export const a = 1;\n');
   });
 
+  test('accepts a positional directory path and uses tsconfig.json inside it', (t) => {
+    const fx = makeFixture(t);
+    fx.write('src/a.ts', 'export const a = 1 as number;\n');
+
+    const r = fx.run([fx.dir]);
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), 'export const a = 1;\n');
+  });
+
   test('exits 2 on an unknown flag', (t) => {
     const fx = makeFixture(t, { tsconfig: false });
 

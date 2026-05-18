@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -39,7 +39,10 @@ function resolveProject(): string {
       `expected at most one tsconfig path, got ${positionals.length}`,
     );
   }
-  return pathResolve(positionals[0] ?? 'tsconfig.json');
+  const resolved = pathResolve(positionals[0] ?? 'tsconfig.json');
+  return statSync(resolved, { throwIfNoEntry: false })?.isDirectory()
+    ? pathResolve(resolved, 'tsconfig.json')
+    : resolved;
 }
 
 function resolveTsgoBin(): string {

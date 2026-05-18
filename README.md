@@ -30,6 +30,7 @@ A few cases where an assertion is kept even though `tsgo` would accept the delet
 ```sh
 npx asserticide                          # uses ./tsconfig.json
 npx asserticide path/to/tsconfig.json
+npx asserticide path/to/dir              # uses path/to/dir/tsconfig.json
 ```
 
 Requires Node ≥ 24. asserticide refuses to run if the project doesn't typecheck cleanly under `tsgo`. Commit your working tree first so you can review the diff afterwards.
