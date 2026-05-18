@@ -176,7 +176,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(r.exitCode, 0);
     assert.equal(fx.read('src/a.ts'), src);
     const s = parseSummary(r.stdout);
-    assert.equal(s.total, 0);
+    assert.equal(s.total, 1);
     assert.equal(s.removed, 0);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
@@ -195,7 +195,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(r.exitCode, 0);
     assert.equal(fx.read('src/a.ts'), src);
     const s = parseSummary(r.stdout);
-    assert.equal(s.total, 0);
+    assert.equal(s.total, 1);
     assert.equal(s.removed, 0);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
@@ -216,7 +216,7 @@ describe('asserticide', { concurrency: true }, () => {
       'export function f(x: string): never {\n  throw x as never;\n}\n',
     );
     const s = parseSummary(r.stdout);
-    assert.equal(s.total, 1);
+    assert.equal(s.total, 2);
     assert.equal(s.removed, 1);
     assert.equal(s.preserved, 1);
   });
@@ -361,7 +361,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(r.exitCode, 0);
     assert.equal(fx.read('src/a.ts'), src);
     const s = parseSummary(r.stdout);
-    assert.equal(s.total, 0);
+    assert.equal(s.total, 1);
     assert.equal(s.removed, 0);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
@@ -377,7 +377,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(r.exitCode, 0);
     assert.equal(fx.read('src/a.ts'), src);
     const s = parseSummary(r.stdout);
-    assert.equal(s.total, 0);
+    assert.equal(s.total, 1);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
   });
@@ -397,7 +397,7 @@ describe('asserticide', { concurrency: true }, () => {
       'export function f(x: any): string {\n  return x as string;\n}\n',
     );
     const s = parseSummary(r.stdout);
-    assert.equal(s.total, 1);
+    assert.equal(s.total, 2);
     assert.equal(s.removed, 1);
     assert.equal(s.preserved, 1);
   });
@@ -417,7 +417,7 @@ describe('asserticide', { concurrency: true }, () => {
       'export function f(x: any): string {\n  return <string>x;\n}\n',
     );
     const s = parseSummary(r.stdout);
-    assert.equal(s.total, 1);
+    assert.equal(s.total, 2);
     assert.equal(s.removed, 1);
     assert.equal(s.preserved, 1);
   });
@@ -571,7 +571,7 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(r.exitCode, 0);
     assert.equal(fx.read('src/a.ts'), src);
     const s = parseSummary(r.stdout);
-    assert.equal(s.total, 0);
+    assert.equal(s.total, 1);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
   });

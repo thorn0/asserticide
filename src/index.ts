@@ -361,8 +361,9 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
     preserved: initialPreserved,
   } = collectAssertions(ip);
   let preserved = initialPreserved;
-  let total = 0;
-  for (const a of assertions) total += a.pendingOuter ? 2 : 1;
+  let candidates = 0;
+  for (const a of assertions) candidates += a.pendingOuter ? 2 : 1;
+  const total = candidates + initialPreserved;
   log(`scanned ${files.length} files, found ${total} type assertions`);
   if (preserved > 0)
     log(
@@ -421,7 +422,7 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
   const reportStep = (filePath: string, label: string): void => {
     progress++;
     log(
-      `[${progress}/${total}] ${relative(process.cwd(), filePath)} - ${label}`,
+      `[${progress}/${candidates}] ${relative(process.cwd(), filePath)} - ${label}`,
     );
   };
 
