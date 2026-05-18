@@ -2,11 +2,11 @@
 
 <p align="center"><img src="logo/logo.webp" alt="asserticide" width="400"></p>
 
-Kill every redundant type assertion in your TypeScript codebase
+Kill every redundant type assertion and non-null assertion in your TypeScript codebase
 
 ## How
 
-For each type assertion.
+For each assertion.
 
 1. Delete it.
 2. Typecheck via [`tsgo`](https://github.com/microsoft/typescript-go).
@@ -24,6 +24,7 @@ A few cases where an assertion is kept even though `tsgo` would accept the delet
 - `x as any as T` — neither half is removed in a way that would change the value's effective type. When `x` already has type `any`, the inner `as any` is removed and the outer `as T` stays.
 - An assertion inside a function with an _inferred_ return type, when removing it would change the function's inferred return type. Functions with an explicit return annotation are exempt.
 - `{ ... } as T` initializing an unannotated variable — on object literals the assertion drives contextual typing inside the braces: editor property suggestions, per-field checks.
+- `x!` when `strictNullChecks` is off — usually scaffolding for an in-progress migration to strict null checks.
 
 ## Use
 
@@ -53,8 +54,8 @@ files changed:             54
 
 The difference is scale.
 
-[`@typescript-eslint/no-unnecessary-type-assertion`](https://typescript-eslint.io/rules/no-unnecessary-type-assertion/) works at the expression level: it reports a type assertion when removing it preserves the expression type or still satisfies the contextual type at that position. It also handles non-null assertions like `x!`.
+[`@typescript-eslint/no-unnecessary-type-assertion`](https://typescript-eslint.io/rules/no-unnecessary-type-assertion/) works at the expression level: it reports an assertion when removing it preserves the expression type or still satisfies the contextual type at that position.
 
-asserticide works at project level: it tries deleting each `as T` or `<T>x`, runs `tsgo`, and keeps the edit if the checked project still typechecks and no [preservation rule](#preserved-by-rule) applies.
+asserticide works at project level: it tries deleting each `as T`, `<T>x`, or `!`, runs `tsgo`, and keeps the edit if the checked project still typechecks and no [preservation rule](#preserved-by-rule) applies.
 
 So asserticide can remove assertions with real local type effects when those effects are unused projectwide.

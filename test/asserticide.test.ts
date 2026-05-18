@@ -727,6 +727,152 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.removed, 1);
   });
 
+  test('removes a redundant non-null assertion `!`', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: string): string {\n  return x!;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: string): string {\n  return x;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+  });
+
+  test('keeps a necessary non-null assertion `!`', (t) => {
+    const fx = makeFixture(t);
+    const src =
+      'export function f(x: string | undefined): string {\n  return x!;\n}\n';
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.reverted, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('preserves a non-null assertion whose removal would widen an inferred return type', (t) => {
+    const fx = makeFixture(t);
+    const src = 'export function f(x?: string) {\n  return x!;\n}\n';
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('removes redundant chained non-null assertions', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(x: { y: string }): string {\n  return x!.y!;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: { y: string }): string {\n  return x.y;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 2);
+    assert.equal(s.removed, 2);
+  });
+
+  test('does not touch non-null assertions when strictNullChecks is off', (t) => {
+    const fx = makeFixture(t, {
+      tsconfig: {
+        ...defaultTsconfig,
+        compilerOptions: {
+          ...defaultTsconfig.compilerOptions,
+          strict: false,
+        },
+      },
+    });
+    const src = 'export function f(x: string): string {\n  return x!;\n}\n';
+    fx.write('src/a.ts', src);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), src);
+    assert.match(r.stdout, /strictNullChecks is off/);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 1);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.removed, 0);
+  });
+
+  test('considers non-null assertions when neither `strict` nor `strictNullChecks` is set (TS default-on)', (t) => {
+    const fx = makeFixture(t, {
+      tsconfig: {
+        compilerOptions: {
+          target: 'ES2024',
+          module: 'NodeNext',
+          esModuleInterop: true,
+          skipLibCheck: true,
+          types: [],
+        },
+        include: ['**/*.ts'],
+      },
+    });
+    fx.write(
+      'src/a.ts',
+      'export function f(x: string): string {\n  return x!;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: string): string {\n  return x;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+  });
+
+  test('considers non-null assertions when strictNullChecks is explicitly enabled', (t) => {
+    const fx = makeFixture(t, {
+      tsconfig: {
+        ...defaultTsconfig,
+        compilerOptions: {
+          ...defaultTsconfig.compilerOptions,
+          strict: false,
+          strictNullChecks: true,
+        },
+      },
+    });
+    fx.write(
+      'src/a.ts',
+      'export function f(x: string): string {\n  return x!;\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: string): string {\n  return x;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+  });
+
   test('does not touch `as` assertions in node_modules source files', (t) => {
     const fx = makeFixture(t);
     fx.write('src/a.ts', 'import { x } from "../node_modules/foo/index.js";\nexport const y = x;\n');

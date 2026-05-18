@@ -182,13 +182,15 @@ const unwrapParens = (e: ts.Expression): ts.Expression => {
   return e;
 };
 
+type RemovableAssertion = ts.AssertionExpression | ts.NonNullExpression;
+
 const cutRangeFor = (
-  node: ts.AssertionExpression,
+  node: RemovableAssertion,
   sf: ts.SourceFile,
 ): CutRange =>
-  ts.isAsExpression(node)
-    ? { cutStart: node.expression.end, cutEnd: node.end }
-    : { cutStart: node.getStart(sf), cutEnd: node.expression.getStart(sf) };
+  ts.isTypeAssertionExpression(node)
+    ? { cutStart: node.getStart(sf), cutEnd: node.expression.getStart(sf) }
+    : { cutStart: node.expression.end, cutEnd: node.end };
 
 const isInitializerOfUntypedVarDecl = (n: ts.Node): boolean => {
   let p: ts.Node | undefined = n.parent;
@@ -246,7 +248,10 @@ function locateFunctionLikeAtPos(
   return found;
 }
 
-function collectAssertions(ip: IncrementalProgram): {
+function collectAssertions(
+  ip: IncrementalProgram,
+  strictNullChecks: boolean,
+): {
   files: ts.SourceFile[];
   assertions: Assertion[];
   preserved: number;
@@ -289,7 +294,17 @@ function collectAssertions(ip: IncrementalProgram): {
       const candidate =
         (ts.isAsExpression(node) && !ts.isConstTypeReference(node.type)) ||
         ts.isTypeAssertionExpression(node);
-      if (candidate && !handled.has(node)) {
+      if (ts.isNonNullExpression(node)) {
+        if (strictNullChecks) {
+          assertions.push({
+            filePath: sf.fileName,
+            ...cutRangeFor(node, sf),
+            fnContext: computeFnContext(node, sf),
+          });
+        } else {
+          preserved++;
+        }
+      } else if (candidate && !handled.has(node)) {
         const inner = unwrapParens(node.expression);
         if (isNeverKeyword(node.type)) {
           // `as never` is almost always an intentional type hack; preserve it.
@@ -347,8 +362,16 @@ function main(): void {
 type TryResult = 'removed' | 'reverted' | 'preserved';
 
 function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
+  const checker = ip.getChecker();
+  const strictNullChecks = !checker.isTypeAssignableTo(
+    checker.getNullType(),
+    checker.getStringType(),
+  );
+
   log(`project = ${project}`);
   log(`tsgo    = ${tsgoBin}`);
+  if (!strictNullChecks)
+    log('strictNullChecks is off; non-null assertions will not be touched');
   log('running initial typecheck...');
 
   const initial = runTsgo(tsgoBin, project);
@@ -362,12 +385,12 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
     files,
     assertions,
     preserved: initialPreserved,
-  } = collectAssertions(ip);
+  } = collectAssertions(ip, strictNullChecks);
   let preserved = initialPreserved;
   let candidates = 0;
   for (const a of assertions) candidates += a.pendingOuter ? 2 : 1;
   const total = candidates + initialPreserved;
-  log(`scanned ${files.length} files, found ${total} type assertions`);
+  log(`scanned ${files.length} files, found ${total} assertions`);
   if (preserved > 0)
     log(
       `(${preserved} assertion${preserved === 1 ? '' : 's'} preserved by rule)`,
