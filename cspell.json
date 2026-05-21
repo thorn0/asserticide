@@ -7,7 +7,8 @@
   "ignorePaths": [
     "node_modules",
     "**/coverage/**",
-    "**/dist/**"
+    "**/dist/**",
+    "bench-fixtures"
   ],
   "words": [
     "asserticide",
@@ -17,6 +18,12 @@
     "Georgii",
     "projectwide",
     "tsgo",
-    "typechecks"
+    "typechecks",
+    "buildinfo",
+    "overcounts",
+    "SBPA",
+    "typeflag",
+    "undercounts",
+    "ustar"
   ]
 }
