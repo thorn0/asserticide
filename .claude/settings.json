@@ -35,6 +35,7 @@
       "Bash(ls *.env* .env*)",
       "Bash(ls:*)",
       "Bash(mv *)",
+      "Bash(node bench/*)",
       "Bash(npm test *)",
       "Bash(npm view *)",
       "Bash(npx eslint:*)",

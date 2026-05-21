@@ -34,17 +34,20 @@ documentation of the perf claims:
 
 Fixtures live under `bench-fixtures/` (gitignored).
 
-## Yarn shortcuts
+## Invocations
 
-- `yarn perf <project-dir>` — run the trace bench
-- `yarn tsgo-probe <project-dir>` — time the cold-start cost
-- `yarn count-assertions <project-dir>` — count candidates
-- `yarn gen-fixture <out-dir> <files> <assertions-per-file>` — generate synthetic
-- `yarn fetch-fixture <name> <github-tarball-url>` — download real source
-- `yarn bench-cleanup` — manage `bench-fixtures/` contents
-- `yarn tsgo-incremental-probe <project-dir>` — incremental flag matrix
-- `yarn tsgo-incremental-transitive-probe` — transitive-importer propagation
-- `yarn tsgo-incremental-scripts-probe` — script-file safety hole
+These scripts are not in `package.json` scripts (they'd pollute the published
+manifest with shortcuts that don't work for end users). Run directly:
+
+- `node bench/bench.mjs <project-dir>` — run the trace bench
+- `node bench/tsgo-probe.mjs <project-dir>` — time the cold-start cost
+- `node bench/count-assertions.mjs <project-dir>` — count candidates
+- `node bench/bench-fixtures-gen.mjs <out-dir> <files> <assertions-per-file>` — generate synthetic
+- `node bench/fetch-fixture.mjs <name> <github-tarball-url>` — download real source
+- `node bench/cleanup.mjs` — manage `bench-fixtures/` contents
+- `node bench/tsgo-incremental-probe.mjs <project-dir>` — incremental flag matrix
+- `node bench/tsgo-incremental-transitive-probe.mjs` — transitive-importer propagation
+- `node bench/tsgo-incremental-scripts-probe.mjs` — script-file safety hole
 
 ## `ASSERTICIDE_TRACE` env var
 
