@@ -131,6 +131,28 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.filesChanged, 2);
   });
 
+  test('reverts removals that break script-global dependents', (t) => {
+    const fx = makeFixture(t, {
+      tsconfig: {
+        ...defaultTsconfig,
+        compilerOptions: { ...defaultTsconfig.compilerOptions, moduleDetection: 'legacy' },
+      },
+    });
+    const source =
+      'declare const unknownValue: unknown;\nvar sharedRecord = unknownValue as { n: number };\n';
+    fx.write('src/a.ts', source);
+    fx.write('src/b.ts', 'function readShared(): number {\n  return sharedRecord.n;\n}\n');
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), source);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 0);
+    assert.equal(s.reverted, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
   test('handles two assertions on the same line via reverse processing', (t) => {
     const fx = makeFixture(t);
     fx.write('src/a.ts', 'export const x = ("a" as string) + ("b" as string);\n');
