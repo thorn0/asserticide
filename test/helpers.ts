@@ -3,10 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
-import { fileURLToPath } from 'node:url';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const asserticideEntry = path.resolve(here, '..', 'dist', 'index.js');
+const asserticideEntry = path.resolve(import.meta.dirname, '..', 'dist', 'index.js');
 
 export const defaultTsconfig = {
   compilerOptions: {

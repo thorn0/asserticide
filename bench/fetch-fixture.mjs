@@ -4,6 +4,8 @@
 import { Buffer } from 'node:buffer';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { gunzipSync } from 'node:zlib';
+import { repoRoot } from './lib.mjs';
 
 const [, , name, url] = process.argv;
 if (!name || !url) {
@@ -11,28 +13,24 @@ if (!name || !url) {
   process.exit(1);
 }
 
-const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
-const repoRoot = path.resolve(here, '..');
 const outRoot = path.resolve(repoRoot, 'bench-fixtures', name);
 const archivePath = path.resolve(repoRoot, 'bench-fixtures', `${name}.tar.gz`);
 
 mkdirSync(path.dirname(archivePath), { recursive: true });
 
-// Download via fetch (Node 24 has built-in fetch)
 if (!existsSync(archivePath)) {
   console.log(`fetching ${url}`);
-  const res = await fetch(url, { redirect: 'follow' });
-  if (!res.ok) {
-    console.error(`fetch failed: ${res.status} ${res.statusText}`);
+  const response = await fetch(url, { redirect: 'follow' });
+  if (!response.ok) {
+    console.error(`fetch failed: ${response.status} ${response.statusText}`);
     process.exit(1);
   }
-  const buf = Buffer.from(await res.arrayBuffer());
+  const buf = Buffer.from(await response.arrayBuffer());
   writeFileSync(archivePath, buf);
   console.log(`wrote ${archivePath} (${buf.length} bytes)`);
 }
 
 // Decompress: gunzipSync for simplicity (32MB → ~150MB is fine in memory)
-const { gunzipSync } = await import('node:zlib');
 const tar = gunzipSync(readFileSync(archivePath));
 console.log(`decompressed: ${tar.length} bytes`);
 

@@ -10,20 +10,10 @@
 // Transitive check on c should fail. Verify:
 //   1. fast incremental alone:               does it catch c's error?
 //   2. fast incremental → full incremental:  does the chain catch it?
-import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..');
-const tsgoBin = path.resolve(
-  repoRoot,
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo',
-);
+import { spawnTsgo } from './lib.mjs';
 
 const projectDirectory = mkdtempSync(path.join(tmpdir(), 'asserticide-trans-probe-'));
 console.log(`project: ${projectDirectory}`);
@@ -62,28 +52,10 @@ writeFileSync(cPath, cSource);
 const buildInfoPath = path.join(projectDirectory, 'fast.tsbuildinfo');
 const tsconfigPath = path.join(projectDirectory, 'tsconfig.json');
 
-function run(args) {
-  return new Promise((resolve) => {
-    const p = spawn(tsgoBin, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: process.platform === 'win32',
-    });
-    let stdout = '';
-    let stderr = '';
-    p.stdout.on('data', (d) => {
-      stdout += d;
-    });
-    p.stderr.on('data', (d) => {
-      stderr += d;
-    });
-    p.on('close', (code) => resolve({ code, stdout, stderr }));
-  });
-}
-
 async function go() {
   // Warmup: build the buildinfo from the clean original.
   console.log('\n--- warmup (clean tree, populate buildinfo) ---');
-  let r = await run([
+  let r = await spawnTsgo([
     '--noEmit',
     '--incremental',
     '--tsBuildInfoFile',
@@ -99,7 +71,7 @@ async function go() {
 
   // Test 1: fast incremental alone.
   console.log('\n--- test 1: fast (--assumeChangesOnlyAffectDirectDependencies) ---');
-  r = await run([
+  r = await spawnTsgo([
     '--noEmit',
     '--incremental',
     '--assumeChangesOnlyAffectDirectDependencies',
@@ -113,7 +85,7 @@ async function go() {
 
   // Test 2: full incremental immediately after.
   console.log('\n--- test 2: full incremental, same buildinfo ---');
-  r = await run([
+  r = await spawnTsgo([
     '--noEmit',
     '--incremental',
     '--tsBuildInfoFile',
@@ -128,7 +100,7 @@ async function go() {
   console.log('\n--- test 3 control: revert, rebuild clean, break, full incremental only ---');
   writeFileSync(aPath, aOriginal);
   rmSync(buildInfoPath, { force: true });
-  r = await run([
+  r = await spawnTsgo([
     '--noEmit',
     '--incremental',
     '--tsBuildInfoFile',
@@ -138,7 +110,7 @@ async function go() {
   ]);
   console.log(`  clean warmup exit=${r.code}`);
   writeFileSync(aPath, aBroken);
-  r = await run([
+  r = await spawnTsgo([
     '--noEmit',
     '--incremental',
     '--tsBuildInfoFile',

@@ -82,7 +82,7 @@ for (let i = 0; i < fileCount; i++) {
       // non-null assertion on map-like access
       lines.push(`  const m${a}: { v?: number } = { v: ${a} }; total += m${a}.v!;`);
     } else if (r < 19) {
-      // force-cast preserved
+      // double assertion via `any` — preserved
       lines.push(`  const f${a} = (values[${a}] as any as number); total += f${a};`);
     } else {
       // as never preserved

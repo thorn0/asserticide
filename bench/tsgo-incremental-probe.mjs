@@ -5,7 +5,6 @@
 // For incremental, between runs we touch a real source file (append a no-op
 // comment, then revert), so the buildinfo sees a change but the next run still
 // has work to do — mirroring asserticide's per-assertion edit pattern.
-import { spawn } from 'node:child_process';
 import {
   existsSync,
   readdirSync,
@@ -15,17 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { performance } from 'node:perf_hooks';
-import { fileURLToPath } from 'node:url';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..');
-const tsgoBin = path.resolve(
-  repoRoot,
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo',
-);
+import { spawnTsgo } from './lib.mjs';
 
 const project = process.argv[2];
 if (!project) {
@@ -36,27 +25,6 @@ const projectDir = path.resolve(project);
 const tsconfigPath = statSync(projectDir).isDirectory()
   ? path.join(projectDir, 'tsconfig.json')
   : projectDir;
-
-function run(args) {
-  return new Promise((resolve) => {
-    const t0 = performance.now();
-    const p = spawn(tsgoBin, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: process.platform === 'win32',
-    });
-    let stdout = '',
-      stderr = '';
-    p.stdout.on('data', (d) => {
-      stdout += d;
-    });
-    p.stderr.on('data', (d) => {
-      stderr += d;
-    });
-    p.on('close', (code) => {
-      resolve({ code, stdout, stderr, ms: performance.now() - t0 });
-    });
-  });
-}
 
 // Find a representative source .ts file to edit between runs.
 function* walkTs(dir) {
@@ -106,7 +74,7 @@ async function bench(label, args, { editBetween }) {
       // Toggle one no-op comment line at end
       writeFileSync(targetFile, originalContent + `\n// probe iter ${i}\n`);
     }
-    const r = await run(args);
+    const r = await spawnTsgo(args);
     times.push(r.ms);
     if (r.code !== 0) {
       console.log(`  run ${i}: exit=${r.code} time=${r.ms.toFixed(0)}ms`);

@@ -3,9 +3,10 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import ts from 'typescript';
+
+const trace = process.env.ASSERTICIDE_TRACE === '1';
 
 interface CutRange {
   cutStart: number;
@@ -47,7 +48,7 @@ function resolveProject(): string {
 
 function resolveTsgoBin(): string {
   const exe = process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo';
-  const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const moduleDirectory = import.meta.dirname;
   const seen = new Set<string>();
   for (const start of [moduleDirectory, process.cwd()]) {
     let directory = path.resolve(start);
@@ -70,20 +71,9 @@ interface TsgoRunOptions {
   tsBuildInfoFile?: string;
 }
 
-function runTsgo(
-  bin: string,
-  project: string,
-  options: TsgoRunOptions = {},
-): { ok: boolean; output: string } {
-  const args = ['--noEmit'];
-  if (options.tsBuildInfoFile) {
-    args.push('--incremental');
-    if (options.assumeChangesOnlyAffectDirectDependencies) {
-      args.push('--assumeChangesOnlyAffectDirectDependencies');
-    }
-    args.push('--tsBuildInfoFile', options.tsBuildInfoFile);
-  }
-  args.push('--project', project);
+type TsgoRunner = (project: string, options?: TsgoRunOptions) => { ok: boolean; output: string };
+
+function createTsgoRunner(bin: string): TsgoRunner {
   const windowsEntrypoint = path.resolve(
     path.dirname(bin),
     '..',
@@ -92,21 +82,30 @@ function runTsgo(
     'bin',
     'tsgo.js',
   );
-  const useWindowsEntrypoint = process.platform === 'win32' && existsSync(windowsEntrypoint);
-  const result = useWindowsEntrypoint
-    ? spawnSync(process.execPath, [windowsEntrypoint, ...args], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-    : spawnSync(bin, args, {
-        encoding: 'utf8',
-        shell: process.platform === 'win32',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-  if (result.error) {
-    return { ok: false, output: result.error.message };
-  }
-  return { ok: result.status === 0, output: (result.stdout ?? '') + (result.stderr ?? '') };
+  const useDirectNode = process.platform === 'win32' && existsSync(windowsEntrypoint);
+  return (project, options = {}) => {
+    const args = ['--noEmit'];
+    if (options.tsBuildInfoFile) {
+      args.push('--incremental');
+      if (options.assumeChangesOnlyAffectDirectDependencies) {
+        args.push('--assumeChangesOnlyAffectDirectDependencies');
+      }
+      args.push('--tsBuildInfoFile', options.tsBuildInfoFile);
+    }
+    args.push('--project', project);
+    const result = useDirectNode
+      ? spawnSync(process.execPath, [windowsEntrypoint, ...args], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+      : spawnSync(bin, args, {
+          encoding: 'utf8',
+          shell: process.platform === 'win32',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+    if (result.error) return { ok: false, output: result.error.message };
+    return { ok: result.status === 0, output: (result.stdout ?? '') + (result.stderr ?? '') };
+  };
 }
 
 const diagnosticHost: ts.FormatDiagnosticsHost = {
@@ -165,10 +164,10 @@ function loadProgram(tsconfigPath: string): IncrementalProgram {
 
   const rebuild = (): void => {
     if (!dirty) return;
-    const t0 = performance.now();
+    const t0 = trace ? performance.now() : 0;
     program = ts.createProgram({ ...programOptions, oldProgram: program });
     checker = program.getTypeChecker();
-    programRebuildTime += performance.now() - t0;
+    if (trace) programRebuildTime += performance.now() - t0;
     dirty = false;
   };
 
@@ -354,8 +353,9 @@ function main(): void {
   try {
     const project = resolveProject();
     const tsgoBin = resolveTsgoBin();
+    const runTsgo = createTsgoRunner(tsgoBin);
     const ip = loadProgram(project);
-    run(project, tsgoBin, ip);
+    run(project, tsgoBin, runTsgo, ip);
   } catch (error_) {
     error(error_ instanceof Error ? error_.message : String(error_));
     process.exit(2);
@@ -364,8 +364,7 @@ function main(): void {
 
 type TryResult = 'removed' | 'reverted' | 'preserved';
 
-function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
-  const trace = process.env.ASSERTICIDE_TRACE === '1';
+function run(project: string, tsgoBin: string, runTsgo: TsgoRunner, ip: IncrementalProgram): void {
   const timings = {
     buildInfoWarmup: 0,
     collectAssertions: 0,
@@ -396,7 +395,7 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
   }
   log('running initial typecheck...');
 
-  const initial = measureSync('initialTsgo', () => runTsgo(tsgoBin, project));
+  const initial = measureSync('initialTsgo', () => runTsgo(project));
   if (!initial.ok) {
     error('initial typecheck failed; refusing to modify files.');
     if (initial.output.trim()) console.error(initial.output);
@@ -443,6 +442,18 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
   const temporaryDirectory = mkdtempSync(path.join(tmpdir(), 'asserticide-'));
   const fastBuildInfoFile = path.join(temporaryDirectory, 'fast.tsbuildinfo');
   const backupBuildInfoFile = path.join(temporaryDirectory, 'backup.tsbuildinfo');
+  const fastOptions: TsgoRunOptions = {
+    assumeChangesOnlyAffectDirectDependencies: true,
+    tsBuildInfoFile: fastBuildInfoFile,
+  };
+  const runMeasuredTsgo = (options?: TsgoRunOptions): { ok: boolean; output: string } => {
+    if (trace) timings.recheckCount++;
+    return measureSync('recheck', () => runTsgo(project, options));
+  };
+  const restoreFastState = (): void => {
+    copyFileSync(backupBuildInfoFile, fastBuildInfoFile);
+    rmSync(backupBuildInfoFile, { force: true });
+  };
 
   const tryRemove = (filePath: string, cut: CutRange & { fnContext?: FnContext }): TryResult => {
     const before = ip.getContents(filePath);
@@ -453,38 +464,17 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
     };
     apply(after);
     const useFastPath = !scriptFiles.has(filePath);
-    const runMeasuredTsgo = (options?: TsgoRunOptions): { ok: boolean; output: string } => {
-      timings.recheckCount++;
-      return measureSync('recheck', () => runTsgo(tsgoBin, project, options));
-    };
-    const fastOptions: TsgoRunOptions = {
-      assumeChangesOnlyAffectDirectDependencies: true,
-      tsBuildInfoFile: fastBuildInfoFile,
-    };
-    const restoreFastState = (): void => {
-      copyFileSync(backupBuildInfoFile, fastBuildInfoFile);
-      rmSync(backupBuildInfoFile, { force: true });
+    const rollback = (outcome: TryResult): TryResult => {
+      apply(before);
+      if (useFastPath) restoreFastState();
+      return outcome;
     };
 
     if (useFastPath) copyFileSync(fastBuildInfoFile, backupBuildInfoFile);
-    const recheck = runMeasuredTsgo(useFastPath ? fastOptions : undefined);
-    if (!recheck.ok) {
-      apply(before);
-      if (useFastPath) restoreFastState();
-      return 'reverted';
-    }
-    if (useFastPath) {
-      const fullRecheck = runMeasuredTsgo();
-      if (!fullRecheck.ok) {
-        apply(before);
-        restoreFastState();
-        return 'reverted';
-      }
-    }
+    if (!runMeasuredTsgo(useFastPath ? fastOptions : undefined).ok) return rollback('reverted');
+    if (useFastPath && !runMeasuredTsgo().ok) return rollback('reverted');
     if (cut.fnContext && !checkReturnTypeStable(filePath, cut.fnContext)) {
-      apply(before);
-      if (useFastPath) restoreFastState();
-      return 'preserved';
+      return rollback('preserved');
     }
     if (useFastPath) {
       rmSync(backupBuildInfoFile, { force: true });
@@ -507,12 +497,7 @@ function run(project: string, tsgoBin: string, ip: IncrementalProgram): void {
   };
 
   try {
-    const warmup = measureSync('buildInfoWarmup', () =>
-      runTsgo(tsgoBin, project, {
-        assumeChangesOnlyAffectDirectDependencies: true,
-        tsBuildInfoFile: fastBuildInfoFile,
-      }),
-    );
+    const warmup = measureSync('buildInfoWarmup', () => runTsgo(project, fastOptions));
     if (!warmup.ok) {
       error('incremental typecheck setup failed; refusing to modify files.');
       if (warmup.output.trim()) console.error(warmup.output);

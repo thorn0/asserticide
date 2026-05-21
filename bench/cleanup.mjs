@@ -2,10 +2,8 @@
 // Remove bench-fixtures content. Pass --all to remove the whole dir.
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { repoRoot } from './lib.mjs';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..');
 const fixturesRoot = path.resolve(repoRoot, 'bench-fixtures');
 
 if (!existsSync(fixturesRoot)) {

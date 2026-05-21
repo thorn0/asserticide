@@ -8,20 +8,10 @@
 //
 // Break a.ts (remove the `as`). b.ts.sharedRecord.n now errors.
 // Test: incremental alone vs cold tsgo.
-import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..');
-const tsgoBin = path.resolve(
-  repoRoot,
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo',
-);
+import { spawnTsgo } from './lib.mjs';
 
 const projectDirectory = mkdtempSync(path.join(tmpdir(), 'asserticide-scripts-probe-'));
 mkdirSync(path.join(projectDirectory, 'src'));
@@ -57,27 +47,9 @@ writeFileSync(bPath, bSource);
 const buildInfoPath = path.join(projectDirectory, 'a.tsbuildinfo');
 const tsconfigPath = path.join(projectDirectory, 'tsconfig.json');
 
-function run(args) {
-  return new Promise((resolve) => {
-    const p = spawn(tsgoBin, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: process.platform === 'win32',
-    });
-    let stdout = '';
-    let stderr = '';
-    p.stdout.on('data', (d) => {
-      stdout += d;
-    });
-    p.stderr.on('data', (d) => {
-      stderr += d;
-    });
-    p.on('close', (code) => resolve({ code, stdout, stderr }));
-  });
-}
-
 try {
   console.log('--- warmup incremental on clean tree ---');
-  let r = await run([
+  let r = await spawnTsgo([
     '--noEmit',
     '--incremental',
     '--tsBuildInfoFile',
@@ -91,7 +63,7 @@ try {
   writeFileSync(aPath, aBroken);
 
   console.log('\n--- test A: --incremental (no assume flag), same buildinfo ---');
-  r = await run([
+  r = await spawnTsgo([
     '--noEmit',
     '--incremental',
     '--tsBuildInfoFile',
@@ -103,13 +75,13 @@ try {
   console.log(`output:\n${(r.stdout + r.stderr).trim() || '(no diagnostics — MISSED THE BUG)'}`);
 
   console.log('\n--- test B: cold tsgo (no incremental, no buildinfo) ---');
-  r = await run(['--noEmit', '-p', tsconfigPath]);
+  r = await spawnTsgo(['--noEmit', '-p', tsconfigPath]);
   console.log(`exit=${r.code}`);
   console.log(`output:\n${(r.stdout + r.stderr).trim() || '(no diagnostics)'}`);
 
   console.log('\n--- test C: --incremental from scratch (delete buildinfo first, no warmup) ---');
   rmSync(buildInfoPath, { force: true });
-  r = await run([
+  r = await spawnTsgo([
     '--noEmit',
     '--incremental',
     '--tsBuildInfoFile',

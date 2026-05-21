@@ -3,11 +3,8 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { performance } from 'node:perf_hooks';
-import { fileURLToPath } from 'node:url';
+import { repoRoot } from './lib.mjs';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..');
 const asserticide = path.resolve(repoRoot, 'dist', 'index.js');
 
 if (!existsSync(asserticide)) {
@@ -16,12 +13,11 @@ if (!existsSync(asserticide)) {
 }
 
 function runCapture(cmd, args, opts = {}) {
-  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
   return new Promise((resolve) => {
     const t0 = performance.now();
-    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: needsShell, ...opts });
-    let stdout = '',
-      stderr = '';
+    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts });
+    let stdout = '';
+    let stderr = '';
     p.stdout.on('data', (d) => {
       stdout += d;
     });
@@ -35,7 +31,7 @@ function runCapture(cmd, args, opts = {}) {
 }
 
 async function benchTraced(name, args, cwd) {
-  const r = await runCapture('node', [asserticide, ...args], {
+  const r = await runCapture(process.execPath, [asserticide, ...args], {
     cwd,
     env: { ...process.env, ASSERTICIDE_TRACE: '1' },
   });
