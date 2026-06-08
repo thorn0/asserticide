@@ -950,4 +950,106 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(r.exitCode, 2);
     assert.match(r.stderr, /expected at most one tsconfig path/i);
   });
+
+  const noUnusedLocals = {
+    ...defaultTsconfig,
+    compilerOptions: { ...defaultTsconfig.compilerOptions, noUnusedLocals: true },
+  };
+
+  test('removes an assertion together with the import it orphans', (t) => {
+    const fx = makeFixture(t, { tsconfig: noUnusedLocals });
+    fx.write('src/types.ts', 'export type Name = string;\n');
+    fx.write(
+      'src/a.ts',
+      "import type { Name } from './types.js';\nexport const greeting = 'hi' as Name;\n",
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), "export const greeting = 'hi';\n");
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+    assert.equal(s.reverted, 0);
+    assert.equal(s.filesChanged, 1);
+  });
+
+  test('drops only the orphaned specifier from a multi-name import', (t) => {
+    const fx = makeFixture(t, { tsconfig: noUnusedLocals });
+    fx.write('src/types.ts', 'export type A = string;\nexport type B = number;\n');
+    fx.write(
+      'src/a.ts',
+      [
+        "import type { A, B } from './types.js';\n",
+        "export const x = 'hi' as A;\n",
+        'export function use(b: B): B {\n  return b;\n}\n',
+      ].join(''),
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      [
+        "import type { B } from './types.js';\n",
+        "export const x = 'hi';\n",
+        'export function use(b: B): B {\n  return b;\n}\n',
+      ].join(''),
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+    assert.equal(s.filesChanged, 1);
+  });
+
+  test('keeps later same-file assertions aligned after an orphaned import is removed', (t) => {
+    const fx = makeFixture(t, { tsconfig: noUnusedLocals });
+    fx.write('src/types.ts', 'export type A = string;\n');
+    fx.write(
+      'src/a.ts',
+      [
+        "import type { A } from './types.js';\n",
+        'export const early = 1 as number;\n',
+        "export const late = 'x' as A;\n",
+      ].join(''),
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      ['export const early = 1;\n', "export const late = 'x';\n"].join(''),
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 2);
+    assert.equal(s.removed, 2);
+    assert.equal(s.filesChanged, 1);
+  });
+
+  test('removes an assertion inside a function and the import it orphans above it', (t) => {
+    const fx = makeFixture(t, { tsconfig: noUnusedLocals });
+    fx.write('src/types.ts', 'export type T = string;\n');
+    fx.write(
+      'src/a.ts',
+      [
+        "import type { T } from './types.js';\n",
+        'export function f() {\n',
+        "  'x' as T;\n",
+        '  return 42;\n',
+        '}\n',
+      ].join(''),
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      ['export function f() {\n', "  'x';\n", '  return 42;\n', '}\n'].join(''),
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+    assert.equal(s.filesChanged, 1);
+  });
 });

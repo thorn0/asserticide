@@ -349,6 +349,147 @@ function collectAssertions(
   return { files, assertions, preserved };
 }
 
+const UNUSED_IMPORT_DIAGNOSTIC = /\bTS6(?:133|192|196)\b/;
+
+const cutContent = (content: string, ranges: readonly CutRange[]): string =>
+  ranges
+    .toSorted((a, b) => b.cutStart - a.cutStart)
+    .reduce((text, r) => text.slice(0, r.cutStart) + text.slice(r.cutEnd), content);
+
+const widthBelow = (ranges: readonly CutRange[], pos: number): number =>
+  ranges.reduce((sum, r) => sum + (r.cutEnd <= pos ? r.cutEnd - r.cutStart : 0), 0);
+
+function findNodeAt(sf: ts.SourceFile, pos: number): ts.Node {
+  let result: ts.Node = sf;
+  const visit = (node: ts.Node): void => {
+    if (pos < node.getStart(sf) || pos >= node.getEnd()) return;
+    result = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return result;
+}
+
+function climb<T extends ts.Node>(node: ts.Node, is: (n: ts.Node) => n is T): T | undefined {
+  for (let n: ts.Node | undefined = node; n; n = n.parent) {
+    if (is(n)) return n;
+  }
+  return undefined;
+}
+
+function importBindingStarts(decl: ts.ImportDeclaration, sf: ts.SourceFile): number[] {
+  const clause = decl.importClause;
+  if (!clause) return [];
+  const starts: number[] = [];
+  if (clause.name) starts.push(clause.name.getStart(sf));
+  const named = clause.namedBindings;
+  if (named) {
+    if (ts.isNamespaceImport(named)) starts.push(named.name.getStart(sf));
+    else for (const element of named.elements) starts.push(element.name.getStart(sf));
+  }
+  return starts;
+}
+
+function declCut(decl: ts.ImportDeclaration, sf: ts.SourceFile): CutRange {
+  const { text } = sf;
+  let cutEnd = decl.getEnd();
+  if (text[cutEnd] === '\r') cutEnd++;
+  if (text[cutEnd] === '\n') cutEnd++;
+  return { cutStart: decl.getStart(sf), cutEnd };
+}
+
+// Excise one named specifier from a multi-element list, consuming the adjacent comma. Exotic
+// shapes (a sole specifier, an unused default beside used names) return null so the caller leaves
+// the assertion in place rather than emit malformed surgery.
+function specifierCut(node: ts.Node, sf: ts.SourceFile): CutRange | null {
+  const specifier = climb(node, ts.isImportSpecifier);
+  if (!specifier) return null;
+  const { elements } = specifier.parent;
+  if (elements.length < 2) return null;
+  const index = elements.indexOf(specifier);
+  return index < elements.length - 1
+    ? { cutStart: specifier.getStart(sf), cutEnd: elements[index + 1].getStart(sf) }
+    : { cutStart: elements[index - 1].getEnd(), cutEnd: specifier.getEnd() };
+}
+
+// After an assertion is cut, the imports that served only its type become unused. Returns the
+// ranges to excise so the removal can stand, or null when the remaining diagnostics are anything
+// other than removable unused imports (a real type error, or an unused non-import binding).
+function collectOrphanedImportCuts(ip: IncrementalProgram, filePath: string): CutRange[] | null {
+  const program = ip.getProgram();
+  const sf = program.getSourceFile(filePath);
+  if (!sf) return null;
+  const diagnostics = program.getSemanticDiagnostics(sf);
+  if (diagnostics.length === 0) return null;
+
+  // A diagnostic inside an `import { ... }` element marks that one specifier unused; one at the
+  // declaration level (a default/namespace binding, or the compiler's whole-clause report, which
+  // it positions at the declaration) marks the whole import unused. Discriminate structurally:
+  // tsgo and the in-process compiler disagree on the exact code (6133/6192/6196) and position.
+  const unusedSpecifiers = new Map<ts.ImportDeclaration, Set<number>>();
+  const fullyUnused = new Set<ts.ImportDeclaration>();
+  for (const { start } of diagnostics) {
+    if (start === undefined) return null;
+    const node = findNodeAt(sf, start);
+    const decl = climb(node, ts.isImportDeclaration);
+    if (!decl) return null;
+    const specifier = climb(node, ts.isImportSpecifier);
+    if (!specifier) {
+      fullyUnused.add(decl);
+      continue;
+    }
+    let starts = unusedSpecifiers.get(decl);
+    if (!starts) {
+      starts = new Set();
+      unusedSpecifiers.set(decl, starts);
+    }
+    starts.add(specifier.name.getStart(sf));
+  }
+
+  const cuts: CutRange[] = [];
+  for (const [decl, starts] of unusedSpecifiers) {
+    if (fullyUnused.has(decl)) continue;
+    if (importBindingStarts(decl, sf).every((s) => starts.has(s))) {
+      fullyUnused.add(decl);
+      continue;
+    }
+    for (const s of starts) {
+      const cut = specifierCut(findNodeAt(sf, s), sf);
+      if (!cut) return null;
+      cuts.push(cut);
+    }
+  }
+  for (const decl of fullyUnused) cuts.push(declCut(decl, sf));
+  return cuts.length > 0 ? cuts : null;
+}
+
+// An import removal edits the top of the file, so every not-yet-processed assertion below it
+// shifts left by the excised width. Keep the precomputed offsets aligned (deduping shared
+// fnContext objects, which several assertions in one function point at).
+function shiftRemaining(
+  assertions: Assertion[],
+  from: number,
+  filePath: string,
+  orphanCuts: readonly CutRange[],
+): void {
+  const shifted = new Set<FnContext>();
+  for (let i = from; i < assertions.length && assertions[i].filePath === filePath; i++) {
+    const a = assertions[i];
+    const delta = widthBelow(orphanCuts, a.cutStart);
+    a.cutStart -= delta;
+    a.cutEnd -= delta;
+    if (a.pendingOuter) {
+      const outerDelta = widthBelow(orphanCuts, a.pendingOuter.cutStart);
+      a.pendingOuter.cutStart -= outerDelta;
+      a.pendingOuter.cutEnd -= outerDelta;
+    }
+    if (a.fnContext && !shifted.has(a.fnContext)) {
+      shifted.add(a.fnContext);
+      a.fnContext.fnStartPos -= widthBelow(orphanCuts, a.fnContext.fnStartPos);
+    }
+  }
+}
+
 function main(): void {
   try {
     const project = resolveProject();
@@ -363,6 +504,11 @@ function main(): void {
 }
 
 type TryResult = 'removed' | 'reverted' | 'preserved';
+
+interface TryOutcome {
+  result: TryResult;
+  orphanCuts: CutRange[];
+}
 
 function run(project: string, tsgoBin: string, runTsgo: TsgoRunner, ip: IncrementalProgram): void {
   const timings = {
@@ -455,34 +601,52 @@ function run(project: string, tsgoBin: string, runTsgo: TsgoRunner, ip: Incremen
     rmSync(backupBuildInfoFile, { force: true });
   };
 
-  const tryRemove = (filePath: string, cut: CutRange & { fnContext?: FnContext }): TryResult => {
+  const tryRemove = (filePath: string, cut: CutRange & { fnContext?: FnContext }): TryOutcome => {
     const before = ip.getContents(filePath);
-    const after = before.slice(0, cut.cutStart) + before.slice(cut.cutEnd);
     const apply = (content: string): void => {
       writeFileSync(filePath, content);
       ip.setContents(filePath, content);
     };
-    apply(after);
     const useFastPath = !scriptFiles.has(filePath);
-    const rollback = (outcome: TryResult): TryResult => {
+    const rollback = (result: TryResult): TryOutcome => {
       apply(before);
       if (useFastPath) restoreFastState();
-      return outcome;
+      return { result, orphanCuts: [] };
     };
+    // Imports removed above the enclosing function shift its start left by their excised width.
+    const stableReturnType = (cuts: readonly CutRange[]): boolean =>
+      !cut.fnContext ||
+      checkReturnTypeStable(filePath, {
+        ...cut.fnContext,
+        fnStartPos: cut.fnContext.fnStartPos - widthBelow(cuts, cut.fnContext.fnStartPos),
+      });
 
     if (useFastPath) copyFileSync(fastBuildInfoFile, backupBuildInfoFile);
-    if (!runMeasuredTsgo(useFastPath ? fastOptions : undefined).ok) return rollback('reverted');
-    if (useFastPath && !runMeasuredTsgo().ok) return rollback('reverted');
-    if (cut.fnContext && !checkReturnTypeStable(filePath, cut.fnContext)) {
-      return rollback('preserved');
+    apply(cutContent(before, [cut]));
+
+    const fast = runMeasuredTsgo(useFastPath ? fastOptions : undefined);
+    if (!fast.ok) {
+      if (!UNUSED_IMPORT_DIAGNOSTIC.test(fast.output)) return rollback('reverted');
+      const cuts = collectOrphanedImportCuts(ip, filePath);
+      if (!cuts) return rollback('reverted');
+      apply(cutContent(ip.getContents(filePath), cuts));
+      // Import removal rewrites the module graph, and the incremental buildinfo was already dirtied
+      // by the failed assertion-only check; drop it so the confirm runs cold and writes it afresh.
+      if (useFastPath) rmSync(fastBuildInfoFile, { force: true });
+      if (!runMeasuredTsgo(useFastPath ? fastOptions : undefined).ok) return rollback('reverted');
+      if (!stableReturnType(cuts)) return rollback('preserved');
+      if (useFastPath) rmSync(backupBuildInfoFile, { force: true });
+      return { result: 'removed', orphanCuts: cuts };
     }
+    if (useFastPath && !runMeasuredTsgo().ok) return rollback('reverted');
+    if (!stableReturnType([])) return rollback('preserved');
     if (useFastPath) {
       rmSync(backupBuildInfoFile, { force: true });
     } else {
       const refresh = runMeasuredTsgo(fastOptions);
       if (!refresh.ok) throw new Error('incremental typecheck refresh failed after script edit');
     }
-    return 'removed';
+    return { result: 'removed', orphanCuts: [] };
   };
 
   const reportStep = (filePath: string, label: string): void => {
@@ -505,28 +669,35 @@ function run(project: string, tsgoBin: string, runTsgo: TsgoRunner, ip: Incremen
       return;
     }
 
-    for (const a of assertions) {
-      const r = tryRemove(a.filePath, a);
-      reportStep(a.filePath, r);
-      bump(r);
-      if (r === 'removed') changedFiles.add(a.filePath);
+    for (let i = 0; i < assertions.length; i++) {
+      const a = assertions[i];
+      const inner = tryRemove(a.filePath, a);
+      reportStep(a.filePath, inner.result);
+      bump(inner.result);
+      if (inner.result === 'removed') changedFiles.add(a.filePath);
+      if (inner.orphanCuts.length > 0) {
+        shiftRemaining(assertions, i + 1, a.filePath, inner.orphanCuts);
+      }
       if (!a.pendingOuter) continue;
-      if (r !== 'removed') {
+      if (inner.result !== 'removed') {
         // Outer is blocked; inherits the inner's outcome bucket.
-        reportStep(a.filePath, r);
-        bump(r);
+        reportStep(a.filePath, inner.result);
+        bump(inner.result);
         continue;
       }
       // Inner removal shifts positions >= cutEnd by W; angle-bracket outer sits before the inner and needs no shift.
       const w = a.cutEnd - a.cutStart;
       const shift = a.pendingOuter.cutStart >= a.cutEnd ? w : 0;
-      const rOuter = tryRemove(a.filePath, {
+      const outer = tryRemove(a.filePath, {
         cutStart: a.pendingOuter.cutStart - shift,
         cutEnd: a.pendingOuter.cutEnd - shift,
         fnContext: a.fnContext,
       });
-      reportStep(a.filePath, rOuter);
-      bump(rOuter);
+      reportStep(a.filePath, outer.result);
+      bump(outer.result);
+      if (outer.orphanCuts.length > 0) {
+        shiftRemaining(assertions, i + 1, a.filePath, outer.orphanCuts);
+      }
     }
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
