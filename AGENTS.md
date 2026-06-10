@@ -1,6 +1,6 @@
 # Required Workflow
 
-- After every code change, run `yarn run check`.
+- After every code change, run `yarn run check:fix`.
 - `yarn run check` validates: lint, unused code, formatting, typecheck, tests, spellcheck. `yarn run check:fix` does the same with auto-fix. Do not run individual checks separately.
 - Fix all type errors and lint issues. Do not suppress with `// @ts-ignore`, `any`, `eslint-disable`, or similar.
 

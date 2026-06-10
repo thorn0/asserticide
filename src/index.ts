@@ -1,12 +1,24 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import ts from 'typescript';
 
 const trace = process.env.ASSERTICIDE_TRACE === '1';
+
+const { version } = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+) as { version: string };
 
 interface CutRange {
   cutStart: number;
@@ -534,6 +546,7 @@ function run(project: string, tsgoBin: string, runTsgo: TsgoRunner, ip: Incremen
     checker.getStringType(),
   );
 
+  log(`v${version}`);
   log(`project = ${project}`);
   log(`tsgo    = ${tsgoBin}`);
   if (!strictNullChecks) {
