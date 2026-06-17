@@ -10,3 +10,4 @@ coverage
 dist
 bench-fixtures
 .claude/settings.local.json
+/tmp/

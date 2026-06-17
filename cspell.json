@@ -8,7 +8,8 @@
     "node_modules",
     "**/coverage/**",
     "**/dist/**",
-    "bench-fixtures"
+    "bench-fixtures",
+    "tmp"
   ],
   "words": [
     "asserticide",

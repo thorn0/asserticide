@@ -16,9 +16,19 @@ import ts from 'typescript';
 
 const trace = process.env.ASSERTICIDE_TRACE === '1';
 
-const { version } = JSON.parse(
-  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
-) as { version: string };
+// The version is purely informational; a missing or malformed package.json must not abort the run.
+function readPackageVersion(): string {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { version: string };
+    return manifest.version;
+  } catch {
+    return 'unknown';
+  }
+}
+
+const version = readPackageVersion();
 
 interface CutRange {
   cutStart: number;
@@ -275,15 +285,96 @@ function locateFunctionLikeAtPos(
   return found;
 }
 
+// Caps `typeContainsAny`'s recursion. Set well below the V8 stack ceiling for the walk's deepest
+// (signature-return) branch, so an expanding generic bottoms out at the cap instead of overflowing;
+// still far past any real, hand-written type. See `walk` for why depth, not `seen`, is the bound.
+const MAX_TYPE_WALK_DEPTH = 500;
+
 function collectAssertions(
   ip: IncrementalProgram,
   strictNullChecks: boolean,
 ): { files: ts.SourceFile[]; assertions: Assertion[]; preserved: number } {
   const program = ip.getProgram();
   const checker = ip.getChecker();
-  const isAnyOperand = (expression: ts.Expression): boolean =>
-    (checker.getTypeAtLocation(expression).flags & ts.TypeFlags.Any) !== 0;
-  const isAnyType = (t: ts.TypeNode): boolean =>
+  // `flags & TypeFlags.Any` only catches a *top-level* `any`. An any-tainted type — `any[]`,
+  // `Record<string, any>`, `Promise<any>`, `{ x: any }` — is structurally an object/reference, so the
+  // bit is clear, yet removing an assertion off it lets `any` propagate just the same (the looser type
+  // stays assignable to the target, so tsgo accepts the deletion). No public API reports nested `any`,
+  // so walk the value's data shape: union/intersection members, type arguments, index-signature
+  // values, property types, the base constraint of instantiable types (type parameters, `T[K]`,
+  // conditionals — their `Object` bit is clear but their `any` lives in the constraint), and the
+  // *return* types of call/construct signatures.
+  //
+  // Signature returns are walked but parameters are not: a return `any` propagates out through the
+  // call result (covariant), whereas a parameter `any` does not leak into the surrounding code
+  // (contravariant). Members and signatures declared in the standard library are skipped — they bake
+  // `any` into ordinary types (`Function.prototype: any`, `String.prototype.replace`'s `...args:
+  // any[]`) and would otherwise taint nearly everything. A member that merges a user declaration with
+  // a library one is skipped wholesale, so a user `any` added that way is missed — harmless because
+  // such a member is identical in operand and target, so removing the assertion widens nothing.
+  const isFromDefaultLibrary = (node: ts.Node | undefined): boolean =>
+    node !== undefined && program.isSourceFileDefaultLibrary(node.getSourceFile());
+  const typeContainsAny = (root: ts.Type): boolean => {
+    const seen = new Set<ts.Type>();
+    // `seen` breaks cycles (a recursive type reaches itself) and memoizes any-free subtrees so a
+    // shared type is walked once. A type reached past MAX_TYPE_WALK_DEPTH is too deeply nested to
+    // finish verifying: an expanding generic (`type Nest<T> = { deeper: Nest<{ wrap: T }> }`) mints a
+    // fresh Type per level, so `seen` never catches it and only depth bounds the recursion. There we
+    // return `true` (assume tainted) — preserving a redundant assertion on a pathologically deep type
+    // is harmless, whereas assuming "clean" could let `any` leak. Returning `true` on the cap also
+    // keeps every `false` reliable: a `false` now means a fully-explored, genuinely any-free subtree,
+    // so the memo can never hide an `any` that a shallower path would have reached.
+    const walk = (t: ts.Type, depth: number): boolean => {
+      if ((t.flags & ts.TypeFlags.Any) !== 0) return true;
+      if (seen.has(t)) return false;
+      if (depth >= MAX_TYPE_WALK_DEPTH) return true;
+      seen.add(t);
+      if (t.isUnionOrIntersection()) return t.types.some((member) => walk(member, depth + 1));
+      if ((t.flags & ts.TypeFlags.Object) === 0) {
+        const constraint = checker.getBaseConstraintOfType(t);
+        return constraint !== undefined && constraint !== t && walk(constraint, depth + 1);
+      }
+      if (
+        ((t as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0 &&
+        checker.getTypeArguments(t as ts.TypeReference).some((arg) => walk(arg, depth + 1))
+      ) {
+        return true;
+      }
+      if (checker.getIndexInfosOfType(t).some((info) => walk(info.type, depth + 1))) return true;
+      const hasAnyReturn = (kind: ts.SignatureKind): boolean =>
+        checker
+          .getSignaturesOfType(t, kind)
+          .some(
+            (sig) =>
+              !isFromDefaultLibrary(sig.declaration) &&
+              walk(checker.getReturnTypeOfSignature(sig), depth + 1),
+          );
+      if (hasAnyReturn(ts.SignatureKind.Call) || hasAnyReturn(ts.SignatureKind.Construct)) {
+        return true;
+      }
+      return checker
+        .getPropertiesOfType(t)
+        .some(
+          (symbol) =>
+            !symbol.declarations?.some(isFromDefaultLibrary) &&
+            walk(checker.getTypeOfSymbol(symbol), depth + 1),
+        );
+    };
+    return walk(root, 0);
+  };
+  // A walk that overflows the stack or throws on an exotic type is treated as any-tainted: preserve
+  // the one assertion conservatively rather than letting the error abort the whole run.
+  const operandContainsAny = (expression: ts.Expression): boolean => {
+    try {
+      return typeContainsAny(checker.getTypeAtLocation(expression));
+    } catch {
+      return true;
+    }
+  };
+  // The target side asks only whether `T` is itself `any` (so the assertion is a no-op any→any).
+  // A partially-`any` target like `{ a: number; b: any }` still narrows and must not exclude
+  // preservation, so this stays a top-level check rather than a deep walk.
+  const targetIsAny = (t: ts.TypeNode): boolean =>
     (checker.getTypeFromTypeNode(t).flags & ts.TypeFlags.Any) !== 0;
   const fnContextCache = new Map<ts.Node, FnContext | undefined>();
   const computeFnContext = (node: ts.Node, sf: ts.SourceFile): FnContext | undefined => {
@@ -333,18 +424,19 @@ function collectAssertions(
           // `{...} as T` on an object-literal initializer drives the literal's contextual type.
           preserved++;
         } else if (ts.isAssertionExpression(inner) && isAnyKeyword(inner.type)) {
-          // `x as any as T`: when the operand is `any`, the outer `as T` is the narrowing and must stay.
-          const operandIsAny = isAnyOperand(inner.expression);
+          // `x as any as T`: when `x` is already any-tainted, the outer `as T` is the narrowing and must stay.
+          const operandTainted = operandContainsAny(inner.expression);
           assertions.push({
             filePath: sf.fileName,
             ...cutRangeFor(inner, sf),
-            pendingOuter: operandIsAny ? undefined : cutRangeFor(node, sf),
+            pendingOuter: operandTainted ? undefined : cutRangeFor(node, sf),
             fnContext: computeFnContext(node, sf),
           });
-          if (operandIsAny) preserved++;
+          if (operandTainted) preserved++;
           handled.add(inner);
-        } else if (isAnyOperand(node.expression) && !isAnyType(node.type)) {
-          // Removing a type assertion whose operand is `any` would silently let `any` propagate.
+        } else if (operandContainsAny(node.expression) && !targetIsAny(node.type)) {
+          // Removing an assertion whose operand is any-tainted (and whose target is not itself `any`)
+          // would let `any` propagate.
           preserved++;
         } else {
           assertions.push({

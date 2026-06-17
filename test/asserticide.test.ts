@@ -37,6 +37,16 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.filesChanged, 1);
   });
 
+  test('logs the package version at startup', (t) => {
+    const fx = makeFixture(t);
+    fx.write('src/a.ts', 'export const x = 1;\n');
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.match(r.stdout, /asserticide: v\d+\.\d+\.\d+/);
+  });
+
   test('keeps a necessary `as` assertion', (t) => {
     const fx = makeFixture(t);
     const source = 'export function f(v: unknown) { return (v as { n: number }).n; }\n';
@@ -329,6 +339,41 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(s.reverted, 1);
   });
 
+  test('keeps the outer `as T` of `x as any as T` and removes the inner when `x` is any-tainted and `x as T` typechecks', (t) => {
+    const fx = makeFixture(t);
+    fx.write(
+      'src/a.ts',
+      'export function f(arr: any[]): string[] {\n  return arr as any as string[];\n}\n',
+    );
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(arr: any[]): string[] {\n  return arr as string[];\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 2);
+    assert.equal(s.removed, 1);
+    assert.equal(s.preserved, 1);
+  });
+
+  test('keeps both halves of `x as any as T` when `x` is any-tainted and `x as T` does not typecheck', (t) => {
+    const fx = makeFixture(t);
+    const source = 'export function f(arr: any[]): string {\n  return arr as any as string;\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), source);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.total, 2);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.reverted, 1);
+  });
+
   test('removes an `as any` assertion when the operand is already `any`', (t) => {
     const fx = makeFixture(t);
     fx.write('src/a.ts', 'export function f(x: any) {\n  return x as any;\n}\n');
@@ -385,6 +430,178 @@ describe('asserticide', { concurrency: true }, () => {
     assert.equal(fx.read('src/a.ts'), source);
     const s = parseSummary(r.stdout);
     assert.equal(s.total, 1);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('keeps an `as` assertion when the operand is `any[]`', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'declare function consume(xs: string[]): void;\n' +
+      'export function f(arr: any[]): string {\n  const xs = arr as string[];\n  consume(xs);\n  return xs[0];\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), source);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('keeps an `as` assertion when the operand is `Record<string, any>`', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'export function g(r: Record<string, any>): number {\n  const o = r as { n: number };\n  return o.n;\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), source);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('keeps an `as` assertion when the operand is `Promise<any>` (type-argument walk)', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'export function h(p: Promise<any>): Promise<string> {\n  return p as Promise<string>;\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), source);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('keeps an `as` assertion onto a partially-`any` target', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'export function f(x: any): number {\n  const o = x as { a: number; b: any };\n  return o.a;\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), source);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+    assert.equal(s.filesChanged, 0);
+  });
+
+  test('keeps an `as` assertion when the operand is a type parameter constrained to `any[]`', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'export function h<T extends any[]>(x: T): number {\n  const y = x as number[];\n  return y[0];\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), source);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+  });
+
+  test('keeps an `as` assertion when `any` hides in a callable member that also carries data', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'type Widget = { (): void; cache: any[] };\n' +
+      'export function f(x: { w: Widget }): { w: Widget } {\n  return x as { w: Widget };\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), source);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+  });
+
+  test('removes a redundant assertion whose operand has only function-typed members', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'export function g(x: { fn: (n: number) => string }): string {\n  const y = x as { fn: (n: number) => string };\n  return y.fn(1);\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function g(x: { fn: (n: number) => string }): string {\n  const y = x;\n  return y.fn(1);\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+  });
+
+  test('keeps an `as` assertion when `any` is a method return type (covariant)', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'export function f(x: { make: () => any }): string {\n  const y = x as { make: () => string };\n  return y.make();\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), source);
+    const s = parseSummary(r.stdout);
+    assert.equal(s.preserved, 1);
+  });
+
+  test('removes a redundant assertion when `any` appears only in a contravariant parameter', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'export function f(x: { on: (e: any) => void }): { on: (e: any) => void } {\n  return x as { on: (e: any) => void };\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: { on: (e: any) => void }): { on: (e: any) => void } {\n  return x;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+  });
+
+  test('removes a redundant assertion when `any` is only a standard-library method return', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'export function f(x: { parse: typeof JSON.parse }): { parse: typeof JSON.parse } {\n  return x as { parse: typeof JSON.parse };\n}\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(
+      fx.read('src/a.ts'),
+      'export function f(x: { parse: typeof JSON.parse }): { parse: typeof JSON.parse } {\n  return x;\n}\n',
+    );
+    const s = parseSummary(r.stdout);
+    assert.equal(s.removed, 1);
+  });
+
+  test('terminates on an expanding recursive generic operand type', (t) => {
+    const fx = makeFixture(t);
+    const source =
+      'type Nest<T> = { val: number; deeper: Nest<{ wrap: T }> };\n' +
+      'declare const n: Nest<number>;\n' +
+      'export const r = n as Nest<number>;\n';
+    fx.write('src/a.ts', source);
+
+    const r = fx.run();
+
+    assert.equal(r.exitCode, 0);
+    assert.equal(fx.read('src/a.ts'), source);
+    const s = parseSummary(r.stdout);
     assert.equal(s.preserved, 1);
     assert.equal(s.filesChanged, 0);
   });
